@@ -45,11 +45,11 @@ function invokeHandler(handler, { method = 'GET', url = '/', headers = {}, body 
 test('Criterion #3 & HTTP API: Smart defaults pre-select last used wallet & top category so mobile quick entry takes <= 4 taps and returns updated remaining cap', async () => {
   const { handler, demoUserId, secondUserId } = createAppHandler({ dbPath: ':memory:' });
 
-  // 1. Verify PWA index.html serves with mobile-native viewport-fit=cover and numpad quick-entry dock
+  // 1. Verify PWA index.html serves with mobile-native viewport-fit=cover and clean Quick Entry sheet
   const htmlRes = await invokeHandler(handler, { method: 'GET', url: '/' });
   assert.equal(htmlRes.status, 200);
   assert.match(htmlRes.text, /viewport-fit=cover/);
-  assert.match(htmlRes.text, /Mobile POS Quick Entry/);
+  assert.match(htmlRes.text, /Quick Entry/);
 
   // 2. Fetch initial dashboard with smart defaults ready on load (0 taps required for wallet/category when using defaults)
   const dashRes1 = await invokeHandler(handler, {

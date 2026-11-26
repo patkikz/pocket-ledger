@@ -1,9 +1,10 @@
 const state = {
   userId: 'user-demo-primary',
   currencyCode: 'USD',
+  activeView: 'home',
+  historyFilter: 'ALL',
   txType: 'EXPENSE',
   digitsMinor: 0,
-  tapCount: 0,
   selectedAccountId: null,
   selectedDestinationAccountId: null,
   selectedCategoryId: null,
@@ -26,32 +27,62 @@ function formatMoney(amountMinor, currencyCode = state.currencyCode) {
   return `${isNeg ? '-' : ''}${sym}${whole}.${cents}`;
 }
 
-function updateKeypadReadout() {
-  const readoutEl = document.getElementById('keypadAmountReadout');
-  const debugEl = document.getElementById('minorUnitsDebug');
-  const tapEl = document.getElementById('tapCounterPill');
-  const submitBtn = document.getElementById('submitTxBtn');
-
-  readoutEl.textContent = formatMoney(state.digitsMinor);
-  debugEl.textContent = `${state.digitsMinor} minor units (64-bit integer)`;
-  tapEl.textContent = `${state.tapCount} tap${state.tapCount === 1 ? '' : 's'} • Smart Defaults Ready`;
-
-  const labels = {
-    EXPENSE: 'Save Expense Now',
-    REFUND: 'Record Refund (−Expense)',
-    INCOME: 'Record Income Now',
-    TRANSFER: 'Execute Neutral Transfer',
-  };
-  submitBtn.querySelector('span').textContent = `${labels[state.txType]} (${formatMoney(state.digitsMinor)})`;
+function showToast(msg, isError = false) {
+  const toast = document.getElementById('toastBanner');
+  toast.textContent = msg;
+  toast.classList.toggle('error', isError);
+  toast.classList.remove('hidden');
+  clearTimeout(showToast._timer);
+  showToast._timer = setTimeout(() => {
+    toast.classList.add('hidden');
+  }, 4000);
 }
 
-function showFeedback(msg, isError = false) {
-  const banner = document.getElementById('quickFeedbackBanner');
-  banner.textContent = msg;
-  banner.style.background = isError ? 'rgba(244, 63, 94, 0.16)' : 'rgba(16, 185, 129, 0.14)';
-  banner.style.borderColor = isError ? 'rgba(244, 63, 94, 0.4)' : 'rgba(16, 185, 129, 0.35)';
-  banner.style.color = isError ? '#fda4af' : '#6ee7b7';
-  banner.classList.remove('hidden');
+function switchView(viewName) {
+  state.activeView = viewName;
+  document.querySelectorAll('.nav-tab').forEach((tab) => {
+    tab.classList.toggle('active', tab.dataset.view === viewName);
+  });
+  document.querySelectorAll('.view-section').forEach((sec) => {
+    sec.classList.toggle('active', sec.id === `view-${viewName}`);
+  });
+}
+
+function openQuickEntry() {
+  document.getElementById('quickEntryOverlay').classList.remove('hidden');
+}
+
+function closeQuickEntry() {
+  document.getElementById('quickEntryOverlay').classList.add('hidden');
+}
+
+function openSettings() {
+  document.getElementById('settingsOverlay').classList.remove('hidden');
+}
+
+function closeSettings() {
+  document.getElementById('settingsOverlay').classList.add('hidden');
+}
+
+function updateKeypadReadout() {
+  document.getElementById('keypadAmountReadout').textContent = formatMoney(state.digitsMinor);
+  const labels = {
+    EXPENSE: 'Save Expense',
+    REFUND: 'Save Refund',
+    INCOME: 'Save Income',
+    TRANSFER: 'Save Transfer',
+  };
+  const amountLabel = state.digitsMinor > 0 ? ` (${formatMoney(state.digitsMinor)})` : '';
+  document.getElementById('submitTxBtn').querySelector('span').textContent = `${labels[state.txType]}${amountLabel}`;
+}
+
+function syncCategorySelection() {
+  if (!state.dashboard) return;
+  const neededKind = state.txType === 'INCOME' ? 'INCOME' : 'EXPENSE';
+  const matching = state.dashboard.categories.filter((c) => c.kind === neededKind);
+  if (!matching.some((c) => c.id === state.selectedCategoryId)) {
+    state.selectedCategoryId = matching[0]?.id || null;
+  }
 }
 
 async function fetchDashboard() {
@@ -63,7 +94,6 @@ async function fetchDashboard() {
   state.dashboard = data;
   state.currencyCode = data.user.homeCurrencyCode;
 
-  // Apply smart defaults if current selection doesn't belong to this tenant
   const accountIds = new Set(data.accounts.map((a) => a.id));
   if (!state.selectedAccountId || !accountIds.has(state.selectedAccountId)) {
     state.selectedAccountId = data.smartDefaults.accountId;
@@ -78,78 +108,178 @@ async function fetchDashboard() {
   renderAll();
 }
 
-function syncCategorySelection() {
-  if (!state.dashboard) return;
-  const neededKind = state.txType === 'INCOME' ? 'INCOME' : 'EXPENSE';
-  const matching = state.dashboard.categories.filter((c) => c.kind === neededKind);
-  if (!matching.some((c) => c.id === state.selectedCategoryId)) {
-    state.selectedCategoryId = matching[0]?.id || null;
+function renderTxItems(transactions, containerEl, { showUndo = false } = {}) {
+  if (transactions.length === 0) {
+    containerEl.innerHTML = `<div class="tx-item"><span class="tx-sub">No transactions yet.</span></div>`;
+    return;
   }
+
+  containerEl.innerHTML = transactions
+    .map((t) => {
+      const isVoid = Boolean(t.voidedAt);
+      const isPositive = t.type === 'INCOME' || t.type === 'REFUND';
+      const sign = t.type === 'EXPENSE' ? '−' : isPositive ? '+' : '';
+      const dotColor = t.categoryColor || (t.type === 'TRANSFER' ? '#38bdf8' : '#94a3b8');
+      const title = t.note || t.categoryName || (t.type === 'TRANSFER' ? 'Account Transfer' : t.type);
+      const accountInfo =
+        t.type === 'TRANSFER'
+          ? `${t.accountName} → ${t.transferDestinationAccountName}`
+          : `${t.accountName}${t.categoryName ? ` • ${t.categoryName}` : ''}`;
+
+      return `<div class="tx-item ${isVoid ? 'voided' : ''}">
+        <div class="tx-left">
+          <span class="tx-dot" style="background:${dotColor};" aria-hidden="true"></span>
+          <div style="min-width:0;">
+            <div class="tx-title">${title}</div>
+            <div class="tx-sub">${t.occurredOn} • ${accountInfo}</div>
+          </div>
+        </div>
+        <div class="tx-right">
+          <span class="tx-amount ${isPositive ? 'positive' : ''}">${sign}${formatMoney(t.amountMinor)}</span>
+          ${
+            showUndo && !isVoid
+              ? `<button type="button" class="btn-undo-sm" data-void-tx="${t.id}">Undo</button>`
+              : ''
+          }
+        </div>
+      </div>`;
+    })
+    .join('');
 }
 
 function renderAll() {
   const d = state.dashboard;
   if (!d) return;
 
-  // Topbar tenant & cycle info
-  document.getElementById('cycleWindowLabel').textContent =
-    `Active Budget Cycle: ${d.cycleStart} → ${d.cycleEnd} (Resets on Day ${d.user.budgetCycleStartDay})`;
+  // Header & Settings
+  document.getElementById('cycleWindowLabel').textContent = `${d.cycleStart} to ${d.cycleEnd}`;
+  document.getElementById('cycleStartDaySelect').value = String(d.user.budgetCycleStartDay);
+  document.getElementById('csvExportLink').href = `/api/export.csv?userId=${encodeURIComponent(state.userId)}`;
 
   const tenantSelect = document.getElementById('tenantSelect');
   tenantSelect.innerHTML = d.availableTenants
     .map((t) => `<option value="${t.id}" ${t.id === state.userId ? 'selected' : ''}>${t.label}</option>`)
     .join('');
 
-  document.getElementById('cycleStartDaySelect').value = String(d.user.budgetCycleStartDay);
-  document.getElementById('csvExportLink').href = `/api/export.csv?userId=${encodeURIComponent(state.userId)}`;
+  // Hero Safe-to-Spend & Summary
+  document.getElementById('kpiSafeToSpend').textContent = formatMoney(d.safeToSpendMinor);
+  document.getElementById('kpiSafeSub').textContent =
+    d.unpaidRecurringMinor > 0
+      ? `Includes ${formatMoney(d.unpaidRecurringMinor)} reserved for upcoming bills`
+      : 'All due bills for this cycle are paid';
+  document.getElementById('kpiTotalSpent').textContent = formatMoney(d.totalSpentMinor);
+  document.getElementById('kpiTotalIncome').textContent = formatMoney(d.totalIncomeMinor);
+  document.getElementById('kpiCardDebt').textContent = formatMoney(d.creditCardDebtMinor);
 
-  // Verify ACID audit badge
-  const allValid = (d.integrityAudits || []).every((a) => a.isValid);
-  const badge = document.getElementById('acidAuditBadge');
-  badge.textContent = allValid
-    ? `ACID Verified • ${d.accounts.length} Accounts 0-Cent Drift`
-    : 'Integrity Drift Detected!';
+  // Due Soon Bills (Hide section completely if no active recurring rules)
+  const recurringSec = document.getElementById('recurringSection');
+  const dueRules = d.dueRecurringRules.filter((r) => r.isDueInCycle);
+  if (dueRules.length === 0) {
+    recurringSec.classList.add('hidden');
+  } else {
+    recurringSec.classList.remove('hidden');
+    document.getElementById('recurringList').innerHTML = dueRules
+      .map(
+        (r) => `<div class="bill-card">
+          <div>
+            <div style="font-weight:700;font-size:0.92rem;">${r.title} • ${formatMoney(r.defaultAmountMinor)}</div>
+            <div class="tx-sub">Due ${r.nextDueDate} from ${r.accountName}</div>
+          </div>
+          <div style="display:flex;gap:0.45rem;">
+            <button type="button" class="btn-mark-paid" data-post-rule="${r.id}">Mark Paid</button>
+            <button type="button" class="btn-secondary" data-skip-rule="${r.id}">Skip</button>
+          </div>
+        </div>`
+      )
+      .join('');
+  }
 
-  // Render Smart Default Chips
-  const sourceStrip = document.getElementById('sourceAccountStrip');
-  sourceStrip.innerHTML = d.accounts
+  // Monthly Budgets
+  document.getElementById('categoryCapsGrid').innerHTML = d.categories
+    .filter((c) => c.kind === 'EXPENSE')
+    .map((c) => {
+      const cap = c.monthlyCapMinor || 0;
+      const ratio = cap > 0 ? Math.max(0, Math.min(1, c.netSpentMinor / cap)) : 0;
+      const isOver = cap > 0 && c.netSpentMinor > cap;
+      const barColor = isOver ? 'var(--accent-rose)' : c.color;
+      const remLabel =
+        c.remainingCapMinor >= 0
+          ? `${formatMoney(c.remainingCapMinor)} left`
+          : `${formatMoney(Math.abs(c.remainingCapMinor))} over`;
+      return `<div class="budget-card">
+        <div class="budget-top">
+          <span class="budget-name">${c.name}</span>
+          <span class="budget-remaining ${isOver ? 'over' : ''}">${remLabel}</span>
+        </div>
+        <div class="progress-track">
+          <div class="progress-fill" style="background:${barColor};transform:scaleX(${ratio});"></div>
+        </div>
+        <div class="budget-meta">${formatMoney(c.netSpentMinor)} spent of ${formatMoney(cap)}</div>
+      </div>`;
+    })
+    .join('');
+
+  // Overview: Last 5 active transactions
+  const activeRecent = d.recentTransactions.filter((t) => !t.voidedAt).slice(0, 5);
+  renderTxItems(activeRecent, document.getElementById('recentTxList'), { showUndo: false });
+
+  // Activity View: Filtered full list
+  const filtered = d.recentTransactions.filter((t) => {
+    if (state.historyFilter === 'ALL') return true;
+    if (state.historyFilter === 'EXPENSE') return t.type === 'EXPENSE' || t.type === 'REFUND';
+    return t.type === state.historyFilter;
+  });
+  renderTxItems(filtered, document.getElementById('fullTxList'), { showUndo: true });
+
+  // Accounts View
+  document.getElementById('netLiquidityLabel').textContent = `Total Net Liquidity: ${formatMoney(d.netLiquidityMinor)}`;
+  document.getElementById('accountsGrid').innerHTML = d.accounts
+    .map((a) => {
+      const typeLabel =
+        a.type === 'CASH_CHECKING' ? 'Cash / Checking' : a.type === 'SAVINGS' ? 'Savings' : 'Credit Card';
+      return `<div class="account-card">
+        <div class="account-header">
+          <span class="account-name">${a.name}</span>
+          <span class="account-type">${typeLabel}</span>
+        </div>
+        <div class="account-balance ${a.cachedBalanceMinor < 0 ? 'negative' : ''}">${formatMoney(a.cachedBalanceMinor)}</div>
+        <button type="button" class="btn-secondary" style="justify-content:center;" data-reconcile-acc="${a.id}" data-acc-name="${a.name}" data-acc-bal="${a.cachedBalanceMinor}">
+          Update Balance
+        </button>
+      </div>`;
+    })
+    .join('');
+
+  // Quick-Entry Modal Chips
+  document.getElementById('sourceAccountStrip').innerHTML = d.accounts
     .map((a) => {
       const sel = a.id === state.selectedAccountId ? 'selected' : '';
-      return `<button type="button" class="chip ${sel}" data-source-acc="${a.id}">
-        <span>${a.name}</span>
-        <span style="opacity:0.75;">${formatMoney(a.cachedBalanceMinor)}</span>
-      </button>`;
+      return `<button type="button" class="chip ${sel}" data-source-acc="${a.id}">${a.name}</button>`;
     })
     .join('');
 
   const categorySection = document.getElementById('categorySection');
   const destSection = document.getElementById('destinationAccountSection');
-
   if (state.txType === 'TRANSFER') {
     categorySection.style.display = 'none';
     destSection.style.display = 'block';
-    const destStrip = document.getElementById('destinationAccountStrip');
-    destStrip.innerHTML = d.accounts
+    document.getElementById('destinationAccountStrip').innerHTML = d.accounts
       .filter((a) => a.id !== state.selectedAccountId)
       .map((a) => {
         const sel = a.id === state.selectedDestinationAccountId ? 'selected' : '';
-        return `<button type="button" class="chip ${sel}" data-dest-acc="${a.id}">
-          <span>→ ${a.name}</span>
-          <span style="opacity:0.75;">${formatMoney(a.cachedBalanceMinor)}</span>
-        </button>`;
+        return `<button type="button" class="chip ${sel}" data-dest-acc="${a.id}">${a.name}</button>`;
       })
       .join('');
   } else {
     categorySection.style.display = 'block';
     destSection.style.display = 'none';
     const neededKind = state.txType === 'INCOME' ? 'INCOME' : 'EXPENSE';
-    const catStrip = document.getElementById('categoryStrip');
-    catStrip.innerHTML = d.categories
+    document.getElementById('categoryStrip').innerHTML = d.categories
       .filter((c) => c.kind === neededKind)
       .map((c) => {
         const sel = c.id === state.selectedCategoryId ? 'selected' : '';
         return `<button type="button" class="chip ${sel}" data-cat-id="${c.id}">
-          <span style="width:8px;height:8px;border-radius:99px;background:${c.color};display:inline-block;"></span>
+          <span style="width:8px;height:8px;border-radius:99px;background:${c.color};display:inline-block;" aria-hidden="true"></span>
           <span>${c.name}</span>
         </button>`;
       })
@@ -157,133 +287,33 @@ function renderAll() {
   }
 
   updateKeypadReadout();
-
-  // KPIs
-  document.getElementById('kpiSafeToSpend').textContent = formatMoney(d.safeToSpendMinor);
-  document.getElementById('kpiSafeSub').textContent =
-    `${formatMoney(d.safeLiquidAssetsMinor)} liquid − ${formatMoney(d.unpaidRecurringMinor)} due bills`;
-
-  document.getElementById('kpiTotalSpent').textContent = formatMoney(d.totalSpentMinor);
-  document.getElementById('kpiSpentCapSub').textContent =
-    `of ${formatMoney(d.totalMonthlyCapMinor)} combined monthly category caps`;
-
-  document.getElementById('kpiTotalIncome').textContent = formatMoney(d.totalIncomeMinor);
-  document.getElementById('kpiNetLiquidity').textContent = formatMoney(d.netLiquidityMinor);
-  document.getElementById('kpiCardDebtSub').textContent =
-    `Credit Card Debt: ${formatMoney(d.creditCardDebtMinor)}`;
-
-  // 1-Tap Recurring Reminders
-  const recurringList = document.getElementById('recurringList');
-  if (d.dueRecurringRules.length === 0) {
-    recurringList.innerHTML = `<div style="font-size:0.8rem;color:var(--text-muted);">No recurring bills scheduled.</div>`;
-  } else {
-    recurringList.innerHTML = d.dueRecurringRules
-      .map(
-        (r) => `<div class="recurring-item">
-          <div>
-            <div style="font-weight:700;font-size:0.88rem;">${r.title} • ${formatMoney(r.defaultAmountMinor)}</div>
-            <div style="font-size:0.74rem;color:var(--text-secondary);">
-              Due ${r.nextDueDate} • ${r.accountName} • ${r.categoryName || 'Transfer'}
-              ${r.isDueInCycle ? '<strong style="color:#fbbf24;"> (Reserved from Safe-to-Spend)</strong>' : ' (Next Cycle)'}
-            </div>
-          </div>
-          <div style="display:flex;gap:0.45rem;">
-            <button type="button" class="btn-post-one-tap" data-post-rule="${r.id}">
-              1-Tap Post to Ledger
-            </button>
-            <button type="button" class="btn-secondary" data-skip-rule="${r.id}">
-              Skip Cycle
-            </button>
-          </div>
-        </div>`
-      )
-      .join('');
-  }
-
-  // Real-World Accounts & Reconcile buttons
-  const accountsGrid = document.getElementById('accountsGrid');
-  accountsGrid.innerHTML = d.accounts
-    .map((a) => {
-      const balColor = a.cachedBalanceMinor < 0 ? 'var(--accent-rose)' : 'var(--text-primary)';
-      return `<div class="account-box">
-        <div class="account-top">
-          <div>
-            <div style="font-weight:700;font-size:0.9rem;">${a.name}</div>
-            <div class="audit-pill">✓ Ledger Sum Matches</div>
-          </div>
-          <span class="account-type-tag">${a.type.replace('_', ' ')}</span>
-        </div>
-        <div>
-          <div class="account-balance" style="color:${balColor};">${formatMoney(a.cachedBalanceMinor)}</div>
-          <div style="font-size:0.7rem;color:var(--text-muted);margin-top:0.15rem;">
-            ${a.includeInSafeToSpend ? 'Included in Safe-to-Spend' : 'Excluded from daily Safe-to-Spend'}
-          </div>
-        </div>
-        <button type="button" class="btn-secondary" style="justify-content:center;" data-reconcile-acc="${a.id}" data-acc-name="${a.name}" data-acc-bal="${a.cachedBalanceMinor}">
-          Reconcile Balance
-        </button>
-      </div>`;
-    })
-    .join('');
-
-  // Reactive Category Caps
-  const capsGrid = document.getElementById('categoryCapsGrid');
-  capsGrid.innerHTML = d.categories
-    .filter((c) => c.kind === 'EXPENSE')
-    .map((c) => {
-      const cap = c.monthlyCapMinor || 0;
-      const ratio = cap > 0 ? Math.max(0, Math.min(1, c.netSpentMinor / cap)) : 0;
-      const isOver = cap > 0 && c.netSpentMinor > cap;
-      const barColor = isOver ? 'var(--accent-rose)' : c.color;
-      return `<div class="category-card">
-        <div style="display:flex;justify-content:space-between;align-items:center;">
-          <span style="font-weight:700;font-size:0.86rem;">${c.name}</span>
-          <span style="font-size:0.76rem;font-weight:700;color:${isOver ? 'var(--accent-rose)' : 'var(--text-secondary)'};">
-            ${formatMoney(c.netSpentMinor)} / ${formatMoney(cap)}
-          </span>
-        </div>
-        <div class="progress-track">
-          <div class="progress-fill" style="background:${barColor};transform:scaleX(${ratio});"></div>
-        </div>
-        <div style="display:flex;justify-content:space-between;font-size:0.72rem;color:var(--text-muted);margin-top:0.4rem;">
-          <span>${c.percentUsed}% used</span>
-          <span>${c.remainingCapMinor >= 0 ? `${formatMoney(c.remainingCapMinor)} left` : `${formatMoney(Math.abs(c.remainingCapMinor))} over cap`}</span>
-        </div>
-      </div>`;
-    })
-    .join('');
-
-  // Ledger Transactions Table
-  const tbody = document.getElementById('ledgerTableBody');
-  tbody.innerHTML = d.recentTransactions
-    .map((t) => {
-      const isVoid = Boolean(t.voidedAt);
-      const flowText =
-        t.type === 'TRANSFER'
-          ? `${t.accountName} → ${t.transferDestinationAccountName}`
-          : t.accountName;
-      const signPrefix =
-        t.type === 'EXPENSE' ? '-' : t.type === 'INCOME' || t.type === 'REFUND' ? '+' : '';
-      return `<tr class="tx-row ${isVoid ? 'tx-voided' : ''}">
-        <td>${t.occurredOn}</td>
-        <td><span class="type-badge type-${t.type}">${t.type}</span></td>
-        <td>${flowText}</td>
-        <td>${t.categoryName || '—'}</td>
-        <td>${t.note || '—'}</td>
-        <td style="text-align:right;font-weight:700;">${signPrefix}${formatMoney(t.amountMinor)}</td>
-        <td style="text-align:right;">
-          ${
-            isVoid
-              ? '<span style="font-size:0.72rem;color:var(--text-muted);">Voided</span>'
-              : `<button type="button" class="btn-secondary" style="padding:0.2rem 0.5rem;font-size:0.72rem;" data-void-tx="${t.id}">Void</button>`
-          }
-        </td>
-      </tr>`;
-    })
-    .join('');
 }
 
-// Event Listeners
+// Navigation & Modal Triggers
+document.querySelectorAll('.nav-tab').forEach((tab) => {
+  tab.addEventListener('click', () => switchView(tab.dataset.view));
+});
+document.getElementById('seeAllActivityBtn').addEventListener('click', () => switchView('history'));
+document.getElementById('openQuickEntryBtn').addEventListener('click', openQuickEntry);
+document.getElementById('heroLogBtn').addEventListener('click', openQuickEntry);
+document.getElementById('closeQuickEntryBtn').addEventListener('click', closeQuickEntry);
+document.getElementById('openSettingsBtn').addEventListener('click', openSettings);
+document.getElementById('closeSettingsBtn').addEventListener('click', closeSettings);
+
+document.getElementById('quickEntryOverlay').addEventListener('click', (e) => {
+  if (e.target.id === 'quickEntryOverlay') closeQuickEntry();
+});
+document.getElementById('settingsOverlay').addEventListener('click', (e) => {
+  if (e.target.id === 'settingsOverlay') closeSettings();
+});
+document.addEventListener('keydown', (e) => {
+  if (e.key === 'Escape') {
+    closeQuickEntry();
+    closeSettings();
+  }
+});
+
+// Keypad Input
 document.getElementById('numpadGrid').addEventListener('pointerdown', (e) => {
   const btn = e.target.closest('[data-key]');
   if (!btn) return;
@@ -299,7 +329,6 @@ document.getElementById('numpadGrid').addEventListener('pointerdown', (e) => {
       state.digitsMinor = state.digitsMinor * 10 + digit;
     }
   }
-  state.tapCount += 1;
   updateKeypadReadout();
 });
 
@@ -311,10 +340,10 @@ document.querySelector('.mode-tabs').addEventListener('click', (e) => {
   state.txType = btn.dataset.txType;
 
   const hints = {
-    EXPENSE: 'Deducts from account & category cap',
-    REFUND: 'Restores account balance & reduces category spend',
-    INCOME: 'Credits account balance & increases cycle income',
-    TRANSFER: 'Moves money between own accounts ($0.00 report impact)',
+    EXPENSE: 'Counts toward your monthly budget',
+    REFUND: 'Reduces spending in this category',
+    INCOME: 'Adds to your account and monthly income',
+    TRANSFER: 'Moves money between your accounts without affecting budgets',
   };
   document.getElementById('typeHintText').textContent = hints[state.txType];
   syncCategorySelection();
@@ -348,10 +377,9 @@ document.getElementById('categoryStrip').addEventListener('click', (e) => {
 
 document.getElementById('submitTxBtn').addEventListener('click', async () => {
   if (state.digitsMinor <= 0) {
-    showFeedback('Enter an amount greater than 0 on the keypad.', true);
+    showToast('Please enter an amount greater than zero.', true);
     return;
   }
-  const tapsUsed = state.tapCount + 1;
   const payload = {
     type: state.txType,
     amountMinor: state.digitsMinor,
@@ -364,54 +392,49 @@ document.getElementById('submitTxBtn').addEventListener('click', async () => {
 
   const res = await fetch('/api/transactions', {
     method: 'POST',
-    headers: {
-      'content-type': 'application/json',
-      'x-user-id': state.userId,
-    },
+    headers: { 'content-type': 'application/json', 'x-user-id': state.userId },
     body: JSON.stringify(payload),
   });
   const data = await res.json();
   if (!res.ok) {
-    showFeedback(data.error || 'Failed to record transaction', true);
+    showToast(data.error || 'Could not save transaction.', true);
     return;
   }
 
   state.digitsMinor = 0;
-  state.tapCount = 0;
   document.getElementById('txNoteInput').value = '';
+  closeQuickEntry();
 
   const remText =
     data.categoryRemainingCapMinor !== null && data.categoryRemainingCapMinor !== undefined
-      ? ` • Remaining Category Cap: ${formatMoney(data.categoryRemainingCapMinor)}`
-      : ' • $0.00 Budget Impact';
-  showFeedback(`Logged ${formatMoney(data.transaction.amountMinor)} in ${tapsUsed} taps${remText}`);
+      ? ` • ${formatMoney(data.categoryRemainingCapMinor)} left in category`
+      : '';
+  showToast(`Saved ${formatMoney(data.transaction.amountMinor)}${remText}`);
   await fetchDashboard();
 });
 
 document.getElementById('recurringList').addEventListener('click', async (e) => {
   const postBtn = e.target.closest('[data-post-rule]');
   if (postBtn) {
-    const ruleId = postBtn.dataset.postRule;
-    const res = await fetch(`/api/recurring/${ruleId}/post`, {
+    const res = await fetch(`/api/recurring/${postBtn.dataset.postRule}/post`, {
       method: 'POST',
       headers: { 'content-type': 'application/json', 'x-user-id': state.userId },
       body: JSON.stringify({}),
     });
     if (res.ok) {
-      showFeedback('1-Tap Recurring Bill posted to ledger & advanced to next cycle!');
+      showToast('Bill marked as paid and added to your activity.');
       await fetchDashboard();
     }
     return;
   }
   const skipBtn = e.target.closest('[data-skip-rule]');
   if (skipBtn) {
-    const ruleId = skipBtn.dataset.skipRule;
-    const res = await fetch(`/api/recurring/${ruleId}/skip`, {
+    const res = await fetch(`/api/recurring/${skipBtn.dataset.skipRule}/skip`, {
       method: 'POST',
       headers: { 'x-user-id': state.userId },
     });
     if (res.ok) {
-      showFeedback('Skipped recurring bill for this cycle.');
+      showToast('Bill skipped for this cycle.');
       await fetchDashboard();
     }
   }
@@ -420,17 +443,16 @@ document.getElementById('recurringList').addEventListener('click', async (e) => 
 document.getElementById('accountsGrid').addEventListener('click', async (e) => {
   const btn = e.target.closest('[data-reconcile-acc]');
   if (!btn) return;
-  const accId = btn.dataset.reconcileAcc;
   const accName = btn.dataset.accName;
   const currentDollars = (Number(btn.dataset.accBal) / 100).toFixed(2);
   const input = window.prompt(
-    `Weekly Reconciliation for ${accName}\nEnter actual real-world statement balance (e.g. ${currentDollars}):`,
+    `Update ${accName} balance\nEnter the current balance shown by your bank (e.g. ${currentDollars}):`,
     currentDollars
   );
   if (input === null) return;
   const parsed = Number(input);
   if (Number.isNaN(parsed)) {
-    showFeedback('Invalid number entered for reconciliation.', true);
+    showToast('Please enter a valid number.', true);
     return;
   }
   const actualBalanceMinor = Math.round(parsed * 100);
@@ -438,29 +460,37 @@ document.getElementById('accountsGrid').addEventListener('click', async (e) => {
     method: 'POST',
     headers: { 'content-type': 'application/json', 'x-user-id': state.userId },
     body: JSON.stringify({
-      accountId: accId,
+      accountId: btn.dataset.reconcileAcc,
       actualBalanceMinor,
       occurredOn: document.getElementById('txDateInput').value || '2026-11-26',
     }),
   });
   if (res.ok) {
-    showFeedback(`Reconciled ${accName} to ${formatMoney(actualBalanceMinor)} via ADJUSTMENT ledger entry.`);
+    showToast(`Updated ${accName} balance to ${formatMoney(actualBalanceMinor)}.`);
     await fetchDashboard();
   }
 });
 
-document.getElementById('ledgerTableBody').addEventListener('click', async (e) => {
+document.getElementById('fullTxList').addEventListener('click', async (e) => {
   const btn = e.target.closest('[data-void-tx]');
   if (!btn) return;
-  const txId = btn.dataset.voidTx;
-  const res = await fetch(`/api/transactions/${txId}/void`, {
+  const res = await fetch(`/api/transactions/${btn.dataset.voidTx}/void`, {
     method: 'POST',
     headers: { 'x-user-id': state.userId },
   });
   if (res.ok) {
-    showFeedback('Transaction soft-voided; account balance recalculated from ledger.');
+    showToast('Transaction removed and balances updated.');
     await fetchDashboard();
   }
+});
+
+document.getElementById('historyFilterPills').addEventListener('click', (e) => {
+  const btn = e.target.closest('[data-filter]');
+  if (!btn) return;
+  document.querySelectorAll('.filter-pill').forEach((p) => p.classList.remove('active'));
+  btn.classList.add('active');
+  state.historyFilter = btn.dataset.filter;
+  renderAll();
 });
 
 document.getElementById('tenantSelect').addEventListener('change', async (e) => {
@@ -468,7 +498,7 @@ document.getElementById('tenantSelect').addEventListener('change', async (e) => 
   state.selectedAccountId = null;
   state.selectedCategoryId = null;
   state.digitsMinor = 0;
-  state.tapCount = 0;
+  closeSettings();
   await fetchDashboard();
 });
 
@@ -479,7 +509,7 @@ document.getElementById('cycleStartDaySelect').addEventListener('change', async 
     headers: { 'content-type': 'application/json', 'x-user-id': state.userId },
     body: JSON.stringify({ budgetCycleStartDay }),
   });
-  showFeedback(`Updated budget cycle start day to Day ${budgetCycleStartDay}.`);
+  showToast(`Monthly budget reset day updated to Day ${budgetCycleStartDay}.`);
   await fetchDashboard();
 });
 
