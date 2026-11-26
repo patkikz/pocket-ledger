@@ -494,10 +494,10 @@ document.getElementById('numpadGrid').addEventListener('pointerdown', (e) => {
   updateKeypadReadout();
 });
 
-document.querySelector('.mode-tabs').addEventListener('click', (e) => {
+document.querySelector('#quickEntryOverlay .mode-tabs').addEventListener('click', (e) => {
   const btn = e.target.closest('[data-tx-type]');
   if (!btn) return;
-  document.querySelectorAll('.mode-tabs .tab-btn').forEach((b) => b.classList.remove('active'));
+  document.querySelectorAll('#quickEntryOverlay .mode-tabs .tab-btn').forEach((b) => b.classList.remove('active'));
   btn.classList.add('active');
   state.txType = btn.dataset.txType;
 
@@ -895,9 +895,11 @@ async function boot() {
     } else {
       showAuthView({ demoEnabled: state.demoEnabled });
     }
-  } catch {
-    showAuthView({ demoEnabled: state.demoEnabled });
-    showAuthError('Unable to connect to PocketLedger. Please try again.');
+  } catch (err) {
+    if (!err?.isAuthError) {
+      showAuthView({ demoEnabled: state.demoEnabled });
+      showAuthError('Unable to connect to PocketLedger. Please try again.');
+    }
   }
 }
 

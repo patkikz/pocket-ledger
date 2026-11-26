@@ -225,4 +225,7 @@ test('UI auth gate markup and session boot script assertions', async () => {
   assert.equal(jsRes.status, 200);
   assert.match(jsRes.text, /\/api\/auth\/me/);
   assert.ok(!jsRes.text.includes("'x-user-id'") && !jsRes.text.includes('"x-user-id"'), 'app.js must not send x-user-id headers');
+  assert.match(jsRes.text, /#quickEntryOverlay \.mode-tabs/);
+  assert.match(jsRes.text, /#quickEntryOverlay \.mode-tabs \.tab-btn/);
+  assert.doesNotMatch(jsRes.text, /querySelector(?:All)?\(['"]\.mode-tabs/);
 });
