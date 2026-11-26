@@ -229,3 +229,40 @@ test('UI auth gate markup and session boot script assertions', async () => {
   assert.match(jsRes.text, /#quickEntryOverlay \.mode-tabs \.tab-btn/);
   assert.doesNotMatch(jsRes.text, /querySelector(?:All)?\(['"]\.mode-tabs/);
 });
+
+test('PWA installability assets: manifest icons, SVG icon, service worker /api/ bypass, Apple meta tags, and SW registration', async () => {
+  const { handler } = createAppHandler({ dbPath: ':memory:' });
+
+  const manifestRes = await invokeHandler(handler, { method: 'GET', url: '/manifest.json' });
+  assert.equal(manifestRes.status, 200);
+  const manifest = manifestRes.json();
+  assert.equal(manifest.id, '/');
+  assert.equal(manifest.scope, '/');
+  assert.ok(Array.isArray(manifest.icons), 'manifest.icons should be an array');
+  assert.ok(
+    manifest.icons.some((icon) => icon.src === '/icons/icon.svg'),
+    'manifest.icons should include /icons/icon.svg'
+  );
+
+  const iconRes = await invokeHandler(handler, { method: 'GET', url: '/icons/icon.svg' });
+  assert.equal(iconRes.status, 200);
+  assert.match(iconRes.headers['content-type'], /image\/svg\+xml/);
+  assert.match(iconRes.text, /viewBox="0 0 512 512"/);
+
+  const swRes = await invokeHandler(handler, { method: 'GET', url: '/sw.js' });
+  assert.equal(swRes.status, 200);
+  assert.match(swRes.headers['content-type'], /application\/javascript/);
+  assert.ok(swRes.text.includes('/api/'), 'sw.js must check for /api/ bypass');
+
+  const htmlRes = await invokeHandler(handler, { method: 'GET', url: '/' });
+  assert.equal(htmlRes.status, 200);
+  assert.match(htmlRes.text, /apple-mobile-web-app-capable/);
+  assert.match(htmlRes.text, /apple-mobile-web-app-status-bar-style/);
+  assert.match(htmlRes.text, /apple-touch-icon/);
+  assert.match(htmlRes.text, /\/icons\/icon\.svg/);
+
+  const jsRes = await invokeHandler(handler, { method: 'GET', url: '/app.js' });
+  assert.equal(jsRes.status, 200);
+  assert.match(jsRes.text, /serviceWorker/);
+  assert.match(jsRes.text, /\/sw\.js/);
+});
