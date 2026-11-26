@@ -1,5 +1,7 @@
 const state = {
-  userId: 'user-demo-primary',
+  user: null,
+  demoEnabled: false,
+  authMode: 'login',
   currencyCode: 'USD',
   referenceDate: '2026-11-26',
   activeView: 'home',
@@ -62,6 +64,75 @@ function closeAllModals() {
   document.querySelectorAll('.modal-overlay').forEach((el) => el.classList.add('hidden'));
 }
 
+function showAuthError(msg) {
+  const banner = document.getElementById('authErrorBanner');
+  banner.textContent = msg;
+  banner.classList.remove('hidden');
+}
+
+function clearAuthError() {
+  const banner = document.getElementById('authErrorBanner');
+  banner.textContent = '';
+  banner.classList.add('hidden');
+}
+
+function setAuthMode(mode) {
+  state.authMode = mode === 'register' ? 'register' : 'login';
+  const isRegister = state.authMode === 'register';
+
+  const signInBtn = document.getElementById('authModeSignInBtn');
+  const registerBtn = document.getElementById('authModeRegisterBtn');
+  signInBtn.classList.toggle('active', !isRegister);
+  signInBtn.setAttribute('aria-selected', String(!isRegister));
+  registerBtn.classList.toggle('active', isRegister);
+  registerBtn.setAttribute('aria-selected', String(isRegister));
+
+  document.getElementById('authRegisterExtras').classList.toggle('hidden', !isRegister);
+  document.getElementById('authPassword').setAttribute('autocomplete', isRegister ? 'new-password' : 'current-password');
+  document.getElementById('authSubmitBtn').textContent = isRegister ? 'Create Account' : 'Sign In';
+  clearAuthError();
+}
+
+function showAuthView({ demoEnabled = state.demoEnabled } = {}) {
+  closeAllModals();
+  state.user = null;
+  state.dashboard = null;
+  state.selectedAccountId = null;
+  state.selectedDestinationAccountId = null;
+  state.selectedCategoryId = null;
+  state.digitsMinor = 0;
+  state.searchQuery = '';
+  document.getElementById('activitySearchInput').value = '';
+  switchView('home');
+
+  document.querySelector('.topbar').classList.add('hidden');
+  document.querySelector('main.container').classList.add('hidden');
+  document.getElementById('demoLoginWrap').classList.toggle('hidden', !demoEnabled);
+  document.getElementById('authView').classList.remove('hidden');
+}
+
+function showAppShell(user) {
+  state.user = user;
+  if (user?.homeCurrencyCode) {
+    state.currencyCode = user.homeCurrencyCode;
+  }
+  document.getElementById('settingsUserEmail').textContent = user?.email || '—';
+  document.getElementById('authView').classList.add('hidden');
+  document.querySelector('.topbar').classList.remove('hidden');
+  document.querySelector('main.container').classList.remove('hidden');
+}
+
+async function apiFetch(url, opts = {}) {
+  const res = await fetch(url, opts);
+  if (res.status === 401) {
+    showAuthView({ demoEnabled: state.demoEnabled });
+    const err = new Error('Authentication required');
+    err.isAuthError = true;
+    throw err;
+  }
+  return res;
+}
+
 function shiftReferenceMonth(deltaMonths) {
   const [y, m, d] = state.referenceDate.split('-').map(Number);
   const dt = new Date(Date.UTC(y, m - 1 + deltaMonths, Math.min(d, 28)));
@@ -92,11 +163,14 @@ function syncCategorySelection() {
 }
 
 async function fetchDashboard() {
-  const res = await fetch(`/api/dashboard?date=${encodeURIComponent(state.referenceDate)}`, {
-    headers: { 'x-user-id': state.userId },
-  });
-  const data = await res.json();
+  const res = await apiFetch(`/api/dashboard?date=${encodeURIComponent(state.referenceDate)}`);
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) {
+    showToast(data.error || 'Could not load dashboard.', true);
+    return;
+  }
   state.dashboard = data;
+  state.user = data.user;
   state.currencyCode = data.user.homeCurrencyCode;
 
   const accountIds = new Set(data.accounts.map((a) => a.id));
@@ -158,14 +232,10 @@ function renderAll() {
 
   // Header & Settings
   document.getElementById('cycleWindowLabel').textContent = `${d.cycleStart} to ${d.cycleEnd}`;
+  document.getElementById('settingsUserEmail').textContent = d.user.email;
   document.getElementById('cycleStartDaySelect').value = String(d.user.budgetCycleStartDay);
   document.getElementById('currencySelect').value = d.user.homeCurrencyCode;
-  document.getElementById('csvExportLink').href = `/api/export.csv?userId=${encodeURIComponent(state.userId)}`;
-
-  const tenantSelect = document.getElementById('tenantSelect');
-  tenantSelect.innerHTML = d.availableTenants
-    .map((t) => `<option value="${t.id}" ${t.id === state.userId ? 'selected' : ''}>${t.label}</option>`)
-    .join('');
+  document.getElementById('csvExportLink').href = '/api/export.csv';
 
   // Empty-state onboarding callout if user has no accounts yet
   document.getElementById('emptyAccountCallout').classList.toggle('hidden', d.accounts.length > 0);
@@ -491,9 +561,9 @@ document.getElementById('submitTxBtn').addEventListener('click', async () => {
     note: document.getElementById('txNoteInput').value.trim(),
   };
 
-  const res = await fetch('/api/transactions', {
+  const res = await apiFetch('/api/transactions', {
     method: 'POST',
-    headers: { 'content-type': 'application/json', 'x-user-id': state.userId },
+    headers: { 'content-type': 'application/json' },
     body: JSON.stringify(payload),
   });
   const data = await res.json();
@@ -521,9 +591,9 @@ document.getElementById('addAccountForm').addEventListener('submit', async (e) =
   const type = document.getElementById('newAccType').value;
   const initialBalanceMinor = Math.round(Number(document.getElementById('newAccBalance').value || 0) * 100);
 
-  const res = await fetch('/api/accounts', {
+  const res = await apiFetch('/api/accounts', {
     method: 'POST',
-    headers: { 'content-type': 'application/json', 'x-user-id': state.userId },
+    headers: { 'content-type': 'application/json' },
     body: JSON.stringify({ name, type, initialBalanceMinor }),
   });
   if (res.ok) {
@@ -554,9 +624,9 @@ document.getElementById('reconcileForm').addEventListener('submit', async (e) =>
   e.preventDefault();
   const accountId = document.getElementById('reconcileAccId').value;
   const actualBalanceMinor = Math.round(Number(document.getElementById('reconcileNewBalance').value) * 100);
-  const res = await fetch('/api/accounts/reconcile', {
+  const res = await apiFetch('/api/accounts/reconcile', {
     method: 'POST',
-    headers: { 'content-type': 'application/json', 'x-user-id': state.userId },
+    headers: { 'content-type': 'application/json' },
     body: JSON.stringify({ accountId, actualBalanceMinor, occurredOn: state.referenceDate }),
   });
   if (res.ok) {
@@ -589,9 +659,9 @@ document.getElementById('categoryForm').addEventListener('submit', async (e) => 
   const monthlyCapMinor = kind === 'INCOME' && !editId ? null : Math.round(Number(capVal) * 100);
 
   if (editId) {
-    const res = await fetch(`/api/categories/${editId}/cap`, {
+    const res = await apiFetch(`/api/categories/${editId}/cap`, {
       method: 'POST',
-      headers: { 'content-type': 'application/json', 'x-user-id': state.userId },
+      headers: { 'content-type': 'application/json' },
       body: JSON.stringify({ monthlyCapMinor }),
     });
     if (res.ok) {
@@ -602,9 +672,9 @@ document.getElementById('categoryForm').addEventListener('submit', async (e) => 
   } else {
     const name = document.getElementById('newCatName').value.trim();
     const color = kind === 'INCOME' ? '#14b8a6' : '#6366f1';
-    const res = await fetch('/api/categories', {
+    const res = await apiFetch('/api/categories', {
       method: 'POST',
-      headers: { 'content-type': 'application/json', 'x-user-id': state.userId },
+      headers: { 'content-type': 'application/json' },
       body: JSON.stringify({ name, kind, monthlyCapMinor, color }),
     });
     if (res.ok) {
@@ -626,9 +696,9 @@ document.getElementById('recurringForm').addEventListener('submit', async (e) =>
   const categoryId = document.getElementById('newBillCategory').value;
   const nextDueDate = document.getElementById('newBillDate').value;
 
-  const res = await fetch('/api/recurring', {
+  const res = await apiFetch('/api/recurring', {
     method: 'POST',
-    headers: { 'content-type': 'application/json', 'x-user-id': state.userId },
+    headers: { 'content-type': 'application/json' },
     body: JSON.stringify({ title, type: 'EXPENSE', defaultAmountMinor, accountId, categoryId, frequency: 'MONTHLY', nextDueDate }),
   });
   if (res.ok) {
@@ -642,9 +712,9 @@ document.getElementById('recurringForm').addEventListener('submit', async (e) =>
 document.getElementById('recurringList').addEventListener('click', async (e) => {
   const postBtn = e.target.closest('[data-post-rule]');
   if (postBtn) {
-    const res = await fetch(`/api/recurring/${postBtn.dataset.postRule}/post`, {
+    const res = await apiFetch(`/api/recurring/${postBtn.dataset.postRule}/post`, {
       method: 'POST',
-      headers: { 'content-type': 'application/json', 'x-user-id': state.userId },
+      headers: { 'content-type': 'application/json' },
       body: JSON.stringify({}),
     });
     if (res.ok) {
@@ -655,9 +725,8 @@ document.getElementById('recurringList').addEventListener('click', async (e) => 
   }
   const skipBtn = e.target.closest('[data-skip-rule]');
   if (skipBtn) {
-    const res = await fetch(`/api/recurring/${skipBtn.dataset.skipRule}/skip`, {
+    const res = await apiFetch(`/api/recurring/${skipBtn.dataset.skipRule}/skip`, {
       method: 'POST',
-      headers: { 'x-user-id': state.userId },
     });
     if (res.ok) {
       showToast('Bill skipped for this cycle.');
@@ -669,9 +738,8 @@ document.getElementById('recurringList').addEventListener('click', async (e) => 
 document.getElementById('fullTxList').addEventListener('click', async (e) => {
   const btn = e.target.closest('[data-void-tx]');
   if (!btn) return;
-  const res = await fetch(`/api/transactions/${btn.dataset.voidTx}/void`, {
+  const res = await apiFetch(`/api/transactions/${btn.dataset.voidTx}/void`, {
     method: 'POST',
-    headers: { 'x-user-id': state.userId },
   });
   if (res.ok) {
     showToast('Transaction removed and balances updated.');
@@ -693,20 +761,11 @@ document.getElementById('historyFilterPills').addEventListener('click', (e) => {
   renderAll();
 });
 
-document.getElementById('tenantSelect').addEventListener('change', async (e) => {
-  state.userId = e.target.value;
-  state.selectedAccountId = null;
-  state.selectedCategoryId = null;
-  state.digitsMinor = 0;
-  closeModal('settingsOverlay');
-  await fetchDashboard();
-});
-
 document.getElementById('currencySelect').addEventListener('change', async (e) => {
   const homeCurrencyCode = e.target.value;
-  await fetch('/api/settings', {
+  await apiFetch('/api/settings', {
     method: 'POST',
-    headers: { 'content-type': 'application/json', 'x-user-id': state.userId },
+    headers: { 'content-type': 'application/json' },
     body: JSON.stringify({ homeCurrencyCode }),
   });
   showToast(`Home currency updated to ${homeCurrencyCode}.`);
@@ -715,9 +774,9 @@ document.getElementById('currencySelect').addEventListener('change', async (e) =
 
 document.getElementById('cycleStartDaySelect').addEventListener('change', async (e) => {
   const budgetCycleStartDay = Number(e.target.value);
-  await fetch('/api/settings', {
+  await apiFetch('/api/settings', {
     method: 'POST',
-    headers: { 'content-type': 'application/json', 'x-user-id': state.userId },
+    headers: { 'content-type': 'application/json' },
     body: JSON.stringify({ budgetCycleStartDay }),
   });
   showToast(`Monthly budget reset day updated to Day ${budgetCycleStartDay}.`);
@@ -731,4 +790,115 @@ document.getElementById('txDateInput').addEventListener('change', (e) => {
   }
 });
 
-fetchDashboard();
+// Auth Gate Handlers
+document.querySelector('.auth-mode-tabs').addEventListener('click', (e) => {
+  const btn = e.target.closest('[data-auth-mode]');
+  if (!btn) return;
+  setAuthMode(btn.dataset.authMode);
+});
+
+async function completeAuthSuccess(user) {
+  clearAuthError();
+  document.getElementById('authPassword').value = '';
+  showAppShell(user);
+  await fetchDashboard();
+}
+
+document.getElementById('authForm').addEventListener('submit', async (e) => {
+  e.preventDefault();
+  clearAuthError();
+
+  const submitBtn = document.getElementById('authSubmitBtn');
+  const email = document.getElementById('authEmail').value.trim();
+  const password = document.getElementById('authPassword').value;
+  const isRegister = state.authMode === 'register';
+
+  const endpoint = isRegister ? '/api/auth/register' : '/api/auth/login';
+  const payload = isRegister
+    ? {
+        email,
+        password,
+        homeCurrencyCode: document.getElementById('authCurrency').value,
+        budgetCycleStartDay: Number(document.getElementById('authCycleStartDay').value),
+      }
+    : { email, password };
+
+  submitBtn.disabled = true;
+  try {
+    const res = await fetch(endpoint, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify(payload),
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) {
+      showAuthError(data.error || (isRegister ? 'Could not create account.' : 'Invalid email or password.'));
+      return;
+    }
+    await completeAuthSuccess(data.user);
+  } catch {
+    showAuthError('Network error. Please try again.');
+  } finally {
+    submitBtn.disabled = false;
+  }
+});
+
+document.getElementById('demoLoginBtn').addEventListener('click', async () => {
+  clearAuthError();
+  const demoBtn = document.getElementById('demoLoginBtn');
+  demoBtn.disabled = true;
+  try {
+    const res = await fetch('/api/auth/login', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        email: 'patrick@pocketledger.app',
+        password: 'pocketledger-demo',
+      }),
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) {
+      showAuthError(data.error || 'Demo sign in failed.');
+      return;
+    }
+    await completeAuthSuccess(data.user);
+  } catch {
+    showAuthError('Network error. Please try again.');
+  } finally {
+    demoBtn.disabled = false;
+  }
+});
+
+document.getElementById('logoutBtn').addEventListener('click', async () => {
+  try {
+    await fetch('/api/auth/logout', { method: 'POST' });
+  } finally {
+    document.getElementById('authPassword').value = '';
+    setAuthMode('login');
+    showAuthView({ demoEnabled: state.demoEnabled });
+  }
+});
+
+async function boot() {
+  setAuthMode('login');
+  try {
+    const res = await fetch('/api/auth/me');
+    if (!res.ok) {
+      showAuthView({ demoEnabled: false });
+      return;
+    }
+    const data = await res.json();
+    state.demoEnabled = Boolean(data.demoEnabled);
+    if (data.authenticated && data.user) {
+      showAppShell(data.user);
+      await fetchDashboard();
+    } else {
+      showAuthView({ demoEnabled: state.demoEnabled });
+    }
+  } catch {
+    showAuthView({ demoEnabled: state.demoEnabled });
+    showAuthError('Unable to connect to PocketLedger. Please try again.');
+  }
+}
+
+boot();

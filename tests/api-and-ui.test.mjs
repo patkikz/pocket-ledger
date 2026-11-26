@@ -211,3 +211,18 @@ test('In-app management APIs: create category, update monthly cap, create recurr
   assert.equal(recRes.status, 201);
   assert.equal(recRes.json().rule.title, 'Spotify Duo');
 });
+
+test('UI auth gate markup and session boot script assertions', async () => {
+  const { handler } = createAppHandler({ dbPath: ':memory:' });
+
+  const htmlRes = await invokeHandler(handler, { method: 'GET', url: '/' });
+  assert.equal(htmlRes.status, 200);
+  assert.match(htmlRes.text, /id="authView"/);
+  assert.match(htmlRes.text, /id="logoutBtn"/);
+  assert.doesNotMatch(htmlRes.text, /id="tenantSelect"/);
+
+  const jsRes = await invokeHandler(handler, { method: 'GET', url: '/app.js' });
+  assert.equal(jsRes.status, 200);
+  assert.match(jsRes.text, /\/api\/auth\/me/);
+  assert.ok(!jsRes.text.includes("'x-user-id'") && !jsRes.text.includes('"x-user-id"'), 'app.js must not send x-user-id headers');
+});
