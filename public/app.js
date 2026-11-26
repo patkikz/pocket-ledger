@@ -296,7 +296,7 @@ function renderAll() {
     categorySection.style.display = 'block';
     destSection.style.display = 'none';
     const neededKind = state.txType === 'INCOME' ? 'INCOME' : 'EXPENSE';
-    document.getElementById('categoryStrip').innerHTML = d.categories
+    const catChips = d.categories
       .filter((c) => c.kind === neededKind)
       .map((c) => {
         const sel = c.id === state.selectedCategoryId ? 'selected' : '';
@@ -306,6 +306,8 @@ function renderAll() {
         </button>`;
       })
       .join('');
+    document.getElementById('categoryStrip').innerHTML =
+      catChips + `<button type="button" class="chip" data-quick-add-cat="${neededKind}">+ New</button>`;
   }
 
   updateKeypadReadout();
@@ -325,15 +327,27 @@ document.getElementById('openSettingsBtn').addEventListener('click', () => openM
 document.getElementById('openAddAccountBtn').addEventListener('click', () => openModal('addAccountOverlay'));
 document.getElementById('emptyAddAccountBtn').addEventListener('click', () => openModal('addAccountOverlay'));
 
-document.getElementById('openAddCategoryBtn').addEventListener('click', () => {
+function openAddCategoryModal(defaultKind = 'EXPENSE') {
   document.getElementById('categoryModalTitle').textContent = 'Add Category';
   document.getElementById('editCategoryId').value = '';
+  document.getElementById('newCatKindGroup').style.display = 'flex';
+  document.getElementById('newCatKind').value = defaultKind;
   document.getElementById('newCatNameGroup').style.display = 'flex';
   document.getElementById('newCatName').required = true;
   document.getElementById('newCatName').value = '';
   document.getElementById('newCatCap').value = '';
+  syncCategoryModalFields();
   openModal('categoryModalOverlay');
-});
+}
+
+function syncCategoryModalFields() {
+  const isIncome = document.getElementById('newCatKind').value === 'INCOME' && !document.getElementById('editCategoryId').value;
+  document.getElementById('newCatCapGroup').style.display = isIncome ? 'none' : 'flex';
+  document.getElementById('newCatCap').required = !isIncome;
+}
+
+document.getElementById('openAddCategoryBtn').addEventListener('click', () => openAddCategoryModal('EXPENSE'));
+document.getElementById('newCatKind').addEventListener('change', syncCategoryModalFields);
 
 document.getElementById('openAddRecurringBtn').addEventListener('click', () => {
   const d = state.dashboard;
@@ -447,6 +461,11 @@ document.getElementById('destinationAccountStrip').addEventListener('click', (e)
 });
 
 document.getElementById('categoryStrip').addEventListener('click', (e) => {
+  const addBtn = e.target.closest('[data-quick-add-cat]');
+  if (addBtn) {
+    openAddCategoryModal(addBtn.dataset.quickAddCat);
+    return;
+  }
   const btn = e.target.closest('[data-cat-id]');
   if (!btn) return;
   state.selectedCategoryId = btn.dataset.catId;
@@ -553,8 +572,11 @@ document.getElementById('categoryCapsGrid').addEventListener('click', (e) => {
   if (!card) return;
   document.getElementById('categoryModalTitle').textContent = `Edit ${card.dataset.catName} Budget`;
   document.getElementById('editCategoryId').value = card.dataset.editCat;
+  document.getElementById('newCatKindGroup').style.display = 'none';
   document.getElementById('newCatNameGroup').style.display = 'none';
   document.getElementById('newCatName').required = false;
+  document.getElementById('newCatCapGroup').style.display = 'flex';
+  document.getElementById('newCatCap').required = true;
   document.getElementById('newCatCap').value = (Number(card.dataset.catCap) / 100).toFixed(2);
   openModal('categoryModalOverlay');
 });
@@ -562,7 +584,9 @@ document.getElementById('categoryCapsGrid').addEventListener('click', (e) => {
 document.getElementById('categoryForm').addEventListener('submit', async (e) => {
   e.preventDefault();
   const editId = document.getElementById('editCategoryId').value;
-  const monthlyCapMinor = Math.round(Number(document.getElementById('newCatCap').value) * 100);
+  const kind = document.getElementById('newCatKind').value;
+  const capVal = document.getElementById('newCatCap').value;
+  const monthlyCapMinor = kind === 'INCOME' && !editId ? null : Math.round(Number(capVal) * 100);
 
   if (editId) {
     const res = await fetch(`/api/categories/${editId}/cap`, {
@@ -577,14 +601,17 @@ document.getElementById('categoryForm').addEventListener('submit', async (e) => 
     }
   } else {
     const name = document.getElementById('newCatName').value.trim();
+    const color = kind === 'INCOME' ? '#14b8a6' : '#6366f1';
     const res = await fetch('/api/categories', {
       method: 'POST',
       headers: { 'content-type': 'application/json', 'x-user-id': state.userId },
-      body: JSON.stringify({ name, kind: 'EXPENSE', monthlyCapMinor, color: '#6366f1' }),
+      body: JSON.stringify({ name, kind, monthlyCapMinor, color }),
     });
     if (res.ok) {
+      const created = await res.json();
+      state.selectedCategoryId = created.category.id;
       closeModal('categoryModalOverlay');
-      showToast(`Added "${name}" budget.`);
+      showToast(`Added "${name}" category.`);
       await fetchDashboard();
     }
   }

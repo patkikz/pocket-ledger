@@ -151,7 +151,18 @@ test('In-app management APIs: create category, update monthly cap, create recurr
   assert.equal(capRes.status, 200);
   assert.equal(capRes.json().category.monthlyCapMinor, 15000);
 
-  // 5. Create a recurring bill rule
+  // 5. Create an INCOME category with no monthly cap
+  const incCatRes = await invokeHandler(handler, {
+    method: 'POST',
+    url: '/api/categories',
+    headers: { 'content-type': 'application/json', 'x-user-id': personalUserId },
+    body: { name: 'Freelance', kind: 'INCOME', monthlyCapMinor: null, color: '#14b8a6' },
+  });
+  assert.equal(incCatRes.status, 201);
+  assert.equal(incCatRes.json().category.kind, 'INCOME');
+  assert.equal(incCatRes.json().category.monthlyCapMinor, null);
+
+  // 6. Create a recurring bill rule
   const recRes = await invokeHandler(handler, {
     method: 'POST',
     url: '/api/recurring',
