@@ -5,6 +5,53 @@ const VALID_ACCOUNT_TYPES = new Set(['CASH_CHECKING', 'SAVINGS', 'CREDIT_CARD'])
 const VALID_CATEGORY_KINDS = new Set(['EXPENSE', 'INCOME']);
 const VALID_TX_TYPES = new Set(['EXPENSE', 'REFUND', 'INCOME', 'TRANSFER', 'ADJUSTMENT']);
 const VALID_FREQUENCIES = new Set(['MONTHLY', 'WEEKLY', 'YEARLY']);
+const DEFAULT_SESSION_TTL_MS = 30 * 24 * 60 * 60 * 1000;
+const STARTER_CATEGORIES = [
+  { name: 'Groceries', kind: 'EXPENSE', monthlyCapMinor: 50000, icon: 'shopping-bag', color: '#10b981' },
+  { name: 'Dining & Coffee', kind: 'EXPENSE', monthlyCapMinor: 30000, icon: 'utensils', color: '#f59e0b' },
+  { name: 'Transport', kind: 'EXPENSE', monthlyCapMinor: 20000, icon: 'car', color: '#3b82f6' },
+  { name: 'Bills & Subs', kind: 'EXPENSE', monthlyCapMinor: 100000, icon: 'zap', color: '#8b5cf6' },
+  { name: 'Income / Paycheck', kind: 'INCOME', monthlyCapMinor: null, icon: 'briefcase', color: '#14b8a6' },
+];
+
+export function hashPassword(password) {
+  if (typeof password !== 'string' || password.length < 8) {
+    const err = new TypeError('Password must be at least 8 characters long');
+    err.code = 'INVALID_PASSWORD';
+    err.statusCode = 400;
+    throw err;
+  }
+  const salt = crypto.randomBytes(16).toString('hex');
+  const hash = crypto.scryptSync(password, salt, 64).toString('hex');
+  return `${salt}:${hash}`;
+}
+
+export function verifyPassword(password, storedHash) {
+  if (typeof password !== 'string' || typeof storedHash !== 'string') {
+    return false;
+  }
+  const parts = storedHash.split(':');
+  if (parts.length !== 2) {
+    return false;
+  }
+  const [salt, expectedHex] = parts;
+  if (!salt || !expectedHex) {
+    return false;
+  }
+  const expectedBuf = Buffer.from(expectedHex, 'hex');
+  if (expectedBuf.length !== 64) {
+    return false;
+  }
+  const actualBuf = crypto.scryptSync(password, salt, 64);
+  if (actualBuf.length !== expectedBuf.length) {
+    return false;
+  }
+  return crypto.timingSafeEqual(actualBuf, expectedBuf);
+}
+
+function hashSessionToken(rawToken) {
+  return crypto.createHash('sha256').update(rawToken).digest('hex');
+}
 
 function assertPositiveIntegerMinor(val, label = 'amountMinor') {
   if (typeof val !== 'number' || !Number.isSafeInteger(val) || val <= 0) {
@@ -102,7 +149,23 @@ export function createLedgerDb(dbPath = ':memory:') {
     CREATE INDEX IF NOT EXISTS idx_categories_user ON categories(user_id);
     CREATE INDEX IF NOT EXISTS idx_transactions_user_date ON transactions(user_id, occurred_on);
     CREATE INDEX IF NOT EXISTS idx_ledger_entries_account ON ledger_entries(user_id, account_id, voided_at);
+
+    CREATE TABLE IF NOT EXISTS sessions (
+      id TEXT PRIMARY KEY,
+      user_id TEXT NOT NULL REFERENCES users(id),
+      token_hash TEXT NOT NULL UNIQUE,
+      expires_at TEXT NOT NULL,
+      created_at TEXT NOT NULL
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_sessions_token_hash ON sessions(token_hash);
+    CREATE INDEX IF NOT EXISTS idx_sessions_user ON sessions(user_id);
   `);
+
+  const userColumns = db.prepare(`PRAGMA table_info(users)`).all();
+  if (!userColumns.some((col) => col.name === 'password_hash')) {
+    db.exec(`ALTER TABLE users ADD COLUMN password_hash TEXT`);
+  }
 
   let txDepth = 0;
   function runInTransaction(fn) {
@@ -184,6 +247,152 @@ export function createLedgerDb(dbPath = ':memory:') {
     `).run(id, email.trim(), homeCurrencyCode.toUpperCase(), budgetCycleStartDay, now);
 
     return getUser(id);
+  }
+
+  function registerUser({ email, password, homeCurrencyCode = 'USD', budgetCycleStartDay = 1 } = {}) {
+    if (typeof email !== 'string' || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email.trim())) {
+      const err = new TypeError('Valid user email is required');
+      err.code = 'INVALID_EMAIL';
+      err.statusCode = 400;
+      throw err;
+    }
+    const normalizedEmail = email.trim().toLowerCase();
+    const passwordHash = hashPassword(password);
+
+    if (typeof homeCurrencyCode !== 'string' || !homeCurrencyCode.trim()) {
+      throw new TypeError('Valid homeCurrencyCode is required');
+    }
+    const cycleDay = Number(budgetCycleStartDay);
+    if (!Number.isInteger(cycleDay) || cycleDay < 1 || cycleDay > 28) {
+      throw new RangeError('budgetCycleStartDay must be an integer between 1 and 28');
+    }
+
+    return runInTransaction(() => {
+      const existing = db.prepare(`SELECT id FROM users WHERE LOWER(email) = ?`).get(normalizedEmail);
+      if (existing) {
+        const err = new Error('An account with this email already exists');
+        err.code = 'DUPLICATE_EMAIL';
+        err.statusCode = 409;
+        throw err;
+      }
+
+      const id = crypto.randomUUID();
+      const now = new Date().toISOString();
+      db.prepare(`
+        INSERT INTO users (id, email, password_hash, home_currency_code, budget_cycle_start_day, created_at)
+        VALUES (?, ?, ?, ?, ?, ?)
+      `).run(id, normalizedEmail, passwordHash, homeCurrencyCode.trim().toUpperCase(), cycleDay, now);
+
+      for (const cat of STARTER_CATEGORIES) {
+        createCategory(id, cat);
+      }
+
+      return getUser(id);
+    });
+  }
+
+  function authenticateUser({ email, password } = {}) {
+    if (typeof email !== 'string' || typeof password !== 'string') {
+      return null;
+    }
+    const normalizedEmail = email.trim().toLowerCase();
+    if (!normalizedEmail) {
+      return null;
+    }
+    const row = db.prepare(`SELECT id, password_hash FROM users WHERE LOWER(email) = ?`).get(normalizedEmail);
+    if (!row || !row.password_hash) {
+      return null;
+    }
+    if (!verifyPassword(password, row.password_hash)) {
+      return null;
+    }
+    return getUser(row.id);
+  }
+
+  function createSession(userId, ttlMs = DEFAULT_SESSION_TTL_MS) {
+    if (typeof ttlMs !== 'number' || !Number.isFinite(ttlMs)) {
+      throw new TypeError('ttlMs must be a finite number');
+    }
+    const user = getUser(userId);
+    if (!user) {
+      throw new Error('User not found');
+    }
+    const rawToken = crypto.randomBytes(32).toString('base64url');
+    const tokenHash = hashSessionToken(rawToken);
+    const id = crypto.randomUUID();
+    const nowMs = Date.now();
+    const createdAt = new Date(nowMs).toISOString();
+    const expiresAt = new Date(nowMs + ttlMs).toISOString();
+
+    db.prepare(`
+      INSERT INTO sessions (id, user_id, token_hash, expires_at, created_at)
+      VALUES (?, ?, ?, ?, ?)
+    `).run(id, userId, tokenHash, expiresAt, createdAt);
+
+    return {
+      rawToken,
+      session: { id, userId, expiresAt, createdAt },
+    };
+  }
+
+  function getSessionByToken(rawToken) {
+    if (!rawToken || typeof rawToken !== 'string') {
+      return null;
+    }
+    const tokenHash = hashSessionToken(rawToken);
+    const row = db.prepare(`
+      SELECT id, user_id, expires_at, created_at
+      FROM sessions
+      WHERE token_hash = ?
+    `).get(tokenHash);
+    if (!row) {
+      return null;
+    }
+    const expiresMs = Date.parse(row.expires_at);
+    if (!Number.isFinite(expiresMs) || expiresMs <= Date.now()) {
+      db.prepare(`DELETE FROM sessions WHERE id = ?`).run(row.id);
+      return null;
+    }
+    return {
+      id: row.id,
+      userId: row.user_id,
+      expiresAt: row.expires_at,
+      createdAt: row.created_at,
+    };
+  }
+
+  function renewSessionIfNeeded(sessionId, ttlMs = DEFAULT_SESSION_TTL_MS) {
+    if (!sessionId || typeof sessionId !== 'string') {
+      return null;
+    }
+    if (typeof ttlMs !== 'number' || !Number.isFinite(ttlMs) || ttlMs <= 0) {
+      throw new TypeError('ttlMs must be a positive finite number');
+    }
+    const row = db.prepare(`SELECT id, expires_at FROM sessions WHERE id = ?`).get(sessionId);
+    if (!row) {
+      return null;
+    }
+    const nowMs = Date.now();
+    const expiresMs = Date.parse(row.expires_at);
+    if (!Number.isFinite(expiresMs) || expiresMs <= nowMs) {
+      db.prepare(`DELETE FROM sessions WHERE id = ?`).run(row.id);
+      return null;
+    }
+    if (expiresMs - nowMs < ttlMs / 2) {
+      const nextExpiresAt = new Date(nowMs + ttlMs).toISOString();
+      db.prepare(`UPDATE sessions SET expires_at = ? WHERE id = ?`).run(nextExpiresAt, row.id);
+      return { renewed: true, expiresAt: nextExpiresAt };
+    }
+    return { renewed: false, expiresAt: row.expires_at };
+  }
+
+  function deleteSessionByToken(rawToken) {
+    if (!rawToken || typeof rawToken !== 'string') {
+      return false;
+    }
+    const tokenHash = hashSessionToken(rawToken);
+    const result = db.prepare(`DELETE FROM sessions WHERE token_hash = ?`).run(tokenHash);
+    return Number(result.changes) > 0;
   }
 
   function getUser(userId) {
@@ -956,6 +1165,12 @@ export function createLedgerDb(dbPath = ':memory:') {
   return {
     db,
     createUser,
+    registerUser,
+    authenticateUser,
+    createSession,
+    getSessionByToken,
+    renewSessionIfNeeded,
+    deleteSessionByToken,
     getUser,
     updateUserSettings,
     createAccount,

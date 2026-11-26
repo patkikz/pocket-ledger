@@ -1,9 +1,35 @@
-export function seedDefaultTenants(ledger) {
+import { hashPassword } from './ledger.mjs';
+
+const DEMO_EMAILS = ['patrick@pocketledger.app', 'alex.isolated@pocketledger.app'];
+
+function ensureDemoPasswords(ledger) {
+  for (const email of DEMO_EMAILS) {
+    const row = ledger.db
+      .prepare('SELECT id, password_hash FROM users WHERE LOWER(email) = ?')
+      .get(email);
+    if (row && !row.password_hash) {
+      ledger.db
+        .prepare('UPDATE users SET password_hash = ? WHERE id = ?')
+        .run(hashPassword('pocketledger-demo'), row.id);
+    }
+  }
+}
+
+export function seedDefaultTenants(ledger, { disableDemo = process.env.DISABLE_DEMO === '1' } = {}) {
+  if (disableDemo) {
+    return {
+      demoUserId: null,
+      secondUserId: null,
+      personalUserId: null,
+    };
+  }
+
   const existing = ledger.getUser('user-demo-primary');
   if (existing) {
     if (!ledger.getUser('user-personal')) {
       seedPersonalProfile(ledger);
     }
+    ensureDemoPasswords(ledger);
     return {
       demoUserId: existing.id,
       secondUserId: 'user-demo-secondary',
@@ -240,6 +266,7 @@ export function seedDefaultTenants(ledger) {
   });
 
   seedPersonalProfile(ledger);
+  ensureDemoPasswords(ledger);
 
   return {
     demoUserId: userA.id,
