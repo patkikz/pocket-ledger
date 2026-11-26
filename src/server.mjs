@@ -17,6 +17,56 @@ const MIME_TYPES = {
   '.svg': 'image/svg+xml',
 };
 
+const SESSION_COOKIE_NAME = 'pl_session';
+const SESSION_MAX_AGE_SECONDS = 2592000; // 30 days
+const DEMO_EMAILS = new Set([
+  'patrick@pocketledger.app',
+  'alex.isolated@pocketledger.app',
+]);
+
+function parseCookies(req) {
+  const header = req.headers?.cookie;
+  if (!header || typeof header !== 'string') {
+    return {};
+  }
+  const cookies = {};
+  for (const part of header.split(';')) {
+    const eqIdx = part.indexOf('=');
+    if (eqIdx === -1) continue;
+    const name = part.slice(0, eqIdx).trim();
+    if (!name) continue;
+    const rawVal = part.slice(eqIdx + 1).trim();
+    try {
+      cookies[name] = decodeURIComponent(rawVal);
+    } catch {
+      cookies[name] = rawVal;
+    }
+  }
+  return cookies;
+}
+
+function isSecureRequest(req) {
+  const forwardedProto = String(req.headers?.['x-forwarded-proto'] || '')
+    .split(',')[0]
+    .trim()
+    .toLowerCase();
+  return forwardedProto === 'https' || Boolean(req.socket?.encrypted);
+}
+
+function buildSessionCookie(rawToken, req, maxAgeSeconds = SESSION_MAX_AGE_SECONDS) {
+  const parts = [
+    `${SESSION_COOKIE_NAME}=${encodeURIComponent(rawToken || '')}`,
+    'HttpOnly',
+    'Path=/',
+    'SameSite=Lax',
+    `Max-Age=${maxAgeSeconds}`,
+  ];
+  if (isSecureRequest(req)) {
+    parts.push('Secure');
+  }
+  return parts.join('; ');
+}
+
 function readJsonBody(req) {
   return new Promise((resolve, reject) => {
     let body = '';
@@ -38,38 +88,99 @@ function readJsonBody(req) {
   });
 }
 
-function sendJson(res, statusCode, payload) {
-  res.writeHead(statusCode, { 'content-type': 'application/json; charset=utf-8' });
+function sendJson(res, statusCode, payload, extraHeaders = {}) {
+  res.writeHead(statusCode, {
+    'content-type': 'application/json; charset=utf-8',
+    ...extraHeaders,
+  });
   res.end(JSON.stringify(payload));
 }
 
-export function createAppHandler({ dbPath = path.join(__dirname, '..', 'pocket-ledger.sqlite') } = {}) {
+export function createAppHandler({
+  dbPath = path.join(__dirname, '..', 'pocket-ledger.sqlite'),
+  disableDemo = process.env.DISABLE_DEMO === '1',
+} = {}) {
   const ledger = createLedgerDb(dbPath);
-  const { demoUserId, secondUserId, personalUserId } = seedDefaultTenants(ledger);
+  const { demoUserId, secondUserId, personalUserId } = seedDefaultTenants(ledger, { disableDemo });
+  const demoEnabled = !disableDemo;
 
   const handler = async (req, res) => {
     try {
       const url = new URL(req.url, 'http://localhost');
-      const userId = req.headers['x-user-id'] || url.searchParams.get('userId') || demoUserId;
+      const cookies = parseCookies(req);
+      const rawToken = cookies[SESSION_COOKIE_NAME] || null;
+
+      if (req.method === 'POST' && url.pathname === '/api/auth/register') {
+        const body = await readJsonBody(req);
+        let user;
+        try {
+          user = ledger.registerUser({
+            email: body.email,
+            password: body.password,
+            ...(body.homeCurrencyCode !== undefined ? { homeCurrencyCode: body.homeCurrencyCode } : {}),
+            ...(body.budgetCycleStartDay !== undefined ? { budgetCycleStartDay: body.budgetCycleStartDay } : {}),
+          });
+        } catch (err) {
+          const status = err.statusCode || (err.code === 'DUPLICATE_EMAIL' ? 409 : 400);
+          return sendJson(res, status, { error: err.message || 'Registration failed' });
+        }
+        const { rawToken: sessionToken } = ledger.createSession(user.id);
+        return sendJson(res, 201, { user }, { 'set-cookie': buildSessionCookie(sessionToken, req) });
+      }
+
+      if (req.method === 'POST' && url.pathname === '/api/auth/login') {
+        const body = await readJsonBody(req);
+        const normalizedEmail = typeof body.email === 'string' ? body.email.trim().toLowerCase() : '';
+        if (disableDemo && DEMO_EMAILS.has(normalizedEmail)) {
+          return sendJson(res, 403, { error: 'Demo accounts are disabled' });
+        }
+        const user = ledger.authenticateUser({
+          email: body.email,
+          password: body.password,
+        });
+        if (!user) {
+          return sendJson(res, 401, { error: 'Invalid email or password' });
+        }
+        const { rawToken: sessionToken } = ledger.createSession(user.id);
+        return sendJson(res, 200, { user }, { 'set-cookie': buildSessionCookie(sessionToken, req) });
+      }
+
+      if (req.method === 'POST' && url.pathname === '/api/auth/logout') {
+        if (rawToken) {
+          ledger.deleteSessionByToken(rawToken);
+        }
+        return sendJson(res, 200, { ok: true }, { 'set-cookie': buildSessionCookie('', req, 0) });
+      }
+
+      if (req.method === 'GET' && url.pathname === '/api/auth/me') {
+        const session = rawToken ? ledger.getSessionByToken(rawToken) : null;
+        const user = session ? ledger.getUser(session.userId) : null;
+        if (!session || !user) {
+          return sendJson(res, 200, { authenticated: false, user: null, demoEnabled });
+        }
+        const renewal = ledger.renewSessionIfNeeded(session.id);
+        const extraHeaders = renewal?.renewed ? { 'set-cookie': buildSessionCookie(rawToken, req) } : {};
+        return sendJson(res, 200, { authenticated: true, user, demoEnabled }, extraHeaders);
+      }
 
       if (url.pathname.startsWith('/api/')) {
-        const user = ledger.getUser(userId);
-        if (!user) {
-          return sendJson(res, 403, { error: `Access denied: tenant '${userId}' does not exist` });
+        const session = rawToken ? ledger.getSessionByToken(rawToken) : null;
+        const user = session ? ledger.getUser(session.userId) : null;
+        if (!session || !user) {
+          return sendJson(res, 401, { error: 'Authentication required' });
         }
+        const userId = session.userId;
+        const renewal = ledger.renewSessionIfNeeded(session.id);
+        const authHeaders = renewal?.renewed ? { 'set-cookie': buildSessionCookie(rawToken, req) } : {};
+        const replyJson = (statusCode, payload) => sendJson(res, statusCode, payload, authHeaders);
 
         if (req.method === 'GET' && url.pathname === '/api/dashboard') {
           const refDate = url.searchParams.get('date') || new Date().toISOString().slice(0, 10);
           const dash = ledger.getCycleDashboard(userId, refDate);
           const integrityAudits = dash.accounts.map((a) => ledger.verifyAccountIntegrity(userId, a.id));
-          return sendJson(res, 200, {
+          return replyJson(200, {
             ...dash,
             integrityAudits,
-            availableTenants: [
-              { id: demoUserId, label: 'Demo: Patrick (USD • 1st)' },
-              { id: secondUserId, label: 'Demo: Alex (PHP • 15th)' },
-              { id: personalUserId, label: 'My Personal Budget (Clean Slate)' },
-            ],
           });
         }
 
@@ -87,7 +198,7 @@ export function createAppHandler({ dbPath = path.join(__dirname, '..', 'pocket-l
 
           const dash = ledger.getCycleDashboard(userId, tx.occurredOn);
           const catSummary = dash.categories.find((c) => c.id === tx.categoryId);
-          return sendJson(res, 201, {
+          return replyJson(201, {
             transaction: tx,
             categoryRemainingCapMinor: catSummary ? catSummary.remainingCapMinor : null,
             dashboard: dash,
@@ -99,9 +210,9 @@ export function createAppHandler({ dbPath = path.join(__dirname, '..', 'pocket-l
           const txId = voidMatch[1];
           try {
             const voided = ledger.voidTransaction(userId, txId);
-            return sendJson(res, 200, { transaction: voided });
+            return replyJson(200, { transaction: voided });
           } catch (err) {
-            return sendJson(res, 403, { error: err.message });
+            return replyJson(403, { error: err.message });
           }
         }
 
@@ -110,14 +221,14 @@ export function createAppHandler({ dbPath = path.join(__dirname, '..', 'pocket-l
           const ruleId = recurringPostMatch[1];
           const body = await readJsonBody(req);
           const result = ledger.postRecurringRule(userId, ruleId, body);
-          return sendJson(res, 200, result);
+          return replyJson(200, result);
         }
 
         const recurringSkipMatch = url.pathname.match(/^\/api\/recurring\/([^/]+)\/skip$/);
         if (req.method === 'POST' && recurringSkipMatch) {
           const ruleId = recurringSkipMatch[1];
           const rule = ledger.skipRecurringRuleCycle(userId, ruleId);
-          return sendJson(res, 200, { rule });
+          return replyJson(200, { rule });
         }
 
         if (req.method === 'POST' && url.pathname === '/api/accounts/reconcile') {
@@ -129,7 +240,7 @@ export function createAppHandler({ dbPath = path.join(__dirname, '..', 'pocket-l
             body.occurredOn || new Date().toISOString().slice(0, 10),
             body.note || 'Weekly Desktop Balance Reconciliation'
           );
-          return sendJson(res, 200, result);
+          return replyJson(200, result);
         }
 
         if (req.method === 'POST' && url.pathname === '/api/accounts') {
@@ -140,7 +251,7 @@ export function createAppHandler({ dbPath = path.join(__dirname, '..', 'pocket-l
             initialBalanceMinor: Number(body.initialBalanceMinor || 0),
             includeInSafeToSpend: body.includeInSafeToSpend,
           });
-          return sendJson(res, 201, { account });
+          return replyJson(201, { account });
         }
 
         if (req.method === 'POST' && url.pathname === '/api/categories') {
@@ -151,7 +262,7 @@ export function createAppHandler({ dbPath = path.join(__dirname, '..', 'pocket-l
             monthlyCapMinor: body.monthlyCapMinor !== null && body.monthlyCapMinor !== undefined ? Number(body.monthlyCapMinor) : null,
             color: body.color || '#6366f1',
           });
-          return sendJson(res, 201, { category });
+          return replyJson(201, { category });
         }
 
         const catCapMatch = url.pathname.match(/^\/api\/categories\/([^/]+)\/cap$/);
@@ -163,7 +274,7 @@ export function createAppHandler({ dbPath = path.join(__dirname, '..', 'pocket-l
             categoryId,
             body.monthlyCapMinor !== null && body.monthlyCapMinor !== undefined ? Number(body.monthlyCapMinor) : null
           );
-          return sendJson(res, 200, { category });
+          return replyJson(200, { category });
         }
 
         if (req.method === 'POST' && url.pathname === '/api/recurring') {
@@ -177,7 +288,7 @@ export function createAppHandler({ dbPath = path.join(__dirname, '..', 'pocket-l
             frequency: body.frequency || 'MONTHLY',
             nextDueDate: body.nextDueDate,
           });
-          return sendJson(res, 201, { rule });
+          return replyJson(201, { rule });
         }
 
         if (req.method === 'POST' && url.pathname === '/api/settings') {
@@ -186,7 +297,7 @@ export function createAppHandler({ dbPath = path.join(__dirname, '..', 'pocket-l
             homeCurrencyCode: body.homeCurrencyCode,
             budgetCycleStartDay: body.budgetCycleStartDay,
           });
-          return sendJson(res, 200, { user: updatedUser });
+          return replyJson(200, { user: updatedUser });
         }
 
         if (req.method === 'GET' && url.pathname === '/api/export.csv') {
@@ -194,11 +305,12 @@ export function createAppHandler({ dbPath = path.join(__dirname, '..', 'pocket-l
           res.writeHead(200, {
             'content-type': 'text/csv; charset=utf-8',
             'content-disposition': `attachment; filename="pocket-ledger-${userId}.csv"`,
+            ...authHeaders,
           });
           return res.end(csv);
         }
 
-        return sendJson(res, 404, { error: 'API endpoint not found' });
+        return replyJson(404, { error: 'API endpoint not found' });
       }
 
       // Static file server for PWA frontend
@@ -227,9 +339,10 @@ export function createAppServer(opts = {}) {
 }
 
 if (process.argv[1] && path.resolve(process.argv[1]) === __filename) {
+  const host = process.env.HOST || '127.0.0.1';
   const port = Number(process.env.PORT || 3000);
   const { server } = createAppServer();
-  server.listen(port, '127.0.0.1', () => {
-    console.log(`PocketLedger V1 running at http://127.0.0.1:${port}`);
+  server.listen(port, host, () => {
+    console.log(`PocketLedger V1 running at http://${host}:${port}`);
   });
 }

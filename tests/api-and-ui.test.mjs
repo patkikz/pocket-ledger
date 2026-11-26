@@ -42,8 +42,38 @@ function invokeHandler(handler, { method = 'GET', url = '/', headers = {}, body 
   });
 }
 
+async function loginAs(handler, email, password) {
+  const res = await invokeHandler(handler, {
+    method: 'POST',
+    url: '/api/auth/login',
+    headers: { 'content-type': 'application/json' },
+    body: { email, password },
+  });
+  assert.equal(res.status, 200, `Login failed for ${email}: ${res.text}`);
+  const raw = res.headers['set-cookie'];
+  const headerVal = Array.isArray(raw) ? raw.find((c) => c.startsWith('pl_session=')) : raw;
+  assert.ok(headerVal, 'Expected Set-Cookie header for pl_session');
+  return headerVal.split(';')[0];
+}
+
+async function registerAs(handler, email, password) {
+  const res = await invokeHandler(handler, {
+    method: 'POST',
+    url: '/api/auth/register',
+    headers: { 'content-type': 'application/json' },
+    body: { email, password },
+  });
+  assert.equal(res.status, 201, `Register failed for ${email}: ${res.text}`);
+  const raw = res.headers['set-cookie'];
+  const headerVal = Array.isArray(raw) ? raw.find((c) => c.startsWith('pl_session=')) : raw;
+  assert.ok(headerVal, 'Expected Set-Cookie header for pl_session');
+  return headerVal.split(';')[0];
+}
+
 test('Criterion #3 & HTTP API: Smart defaults pre-select last used wallet & top category so mobile quick entry takes <= 4 taps and returns updated remaining cap', async () => {
-  const { handler, demoUserId, secondUserId } = createAppHandler({ dbPath: ':memory:' });
+  const { handler } = createAppHandler({ dbPath: ':memory:' });
+  const demoCookie = await loginAs(handler, 'patrick@pocketledger.app', 'pocketledger-demo');
+  const secondCookie = await loginAs(handler, 'alex.isolated@pocketledger.app', 'pocketledger-demo');
 
   // 1. Verify PWA index.html serves with mobile-native viewport-fit=cover and clean Quick Entry sheet
   const htmlRes = await invokeHandler(handler, { method: 'GET', url: '/' });
@@ -55,7 +85,7 @@ test('Criterion #3 & HTTP API: Smart defaults pre-select last used wallet & top 
   const dashRes1 = await invokeHandler(handler, {
     method: 'GET',
     url: '/api/dashboard?date=2026-11-26',
-    headers: { 'x-user-id': demoUserId },
+    headers: { cookie: demoCookie },
   });
   assert.equal(dashRes1.status, 200);
   const dash1 = dashRes1.json();
@@ -70,7 +100,7 @@ test('Criterion #3 & HTTP API: Smart defaults pre-select last used wallet & top 
     url: '/api/transactions',
     headers: {
       'content-type': 'application/json',
-      'x-user-id': demoUserId,
+      cookie: demoCookie,
     },
     body: {
       type: 'EXPENSE',
@@ -90,7 +120,7 @@ test('Criterion #3 & HTTP API: Smart defaults pre-select last used wallet & top 
   const voidOtherRes = await invokeHandler(handler, {
     method: 'POST',
     url: `/api/transactions/${createdPayload.transaction.id}/void`,
-    headers: { 'x-user-id': secondUserId },
+    headers: { cookie: secondCookie },
   });
   assert.equal(voidOtherRes.status, 403);
 
@@ -98,7 +128,7 @@ test('Criterion #3 & HTTP API: Smart defaults pre-select last used wallet & top 
   const csvRes = await invokeHandler(handler, {
     method: 'GET',
     url: '/api/export.csv',
-    headers: { 'x-user-id': demoUserId },
+    headers: { cookie: demoCookie },
   });
   assert.equal(csvRes.status, 200);
   assert.match(csvRes.headers['content-type'], /text\/csv/);
@@ -106,14 +136,15 @@ test('Criterion #3 & HTTP API: Smart defaults pre-select last used wallet & top 
 });
 
 test('In-app management APIs: create category, update monthly cap, create recurring rule, and clean My Budget profile', async () => {
-  const { handler, demoUserId, personalUserId } = createAppHandler({ dbPath: ':memory:' });
+  const { handler, personalUserId } = createAppHandler({ dbPath: ':memory:' });
 
-  // 1. Personal clean-slate profile exists and starts with 0 transactions
+  // 1. Personal clean-slate profile exists and a registered account starts with 0 transactions
   assert.ok(personalUserId, 'personalUserId is returned');
+  const personalCookie = await registerAs(handler, 'personal.clean@example.com', 'password123');
   const personalDashRes = await invokeHandler(handler, {
     method: 'GET',
     url: '/api/dashboard?date=2026-11-26',
-    headers: { 'x-user-id': personalUserId },
+    headers: { cookie: personalCookie },
   });
   assert.equal(personalDashRes.status, 200);
   const personalDash = personalDashRes.json();
@@ -123,7 +154,7 @@ test('In-app management APIs: create category, update monthly cap, create recurr
   const accRes = await invokeHandler(handler, {
     method: 'POST',
     url: '/api/accounts',
-    headers: { 'content-type': 'application/json', 'x-user-id': personalUserId },
+    headers: { 'content-type': 'application/json', cookie: personalCookie },
     body: { name: 'My Wallet', type: 'CASH_CHECKING', initialBalanceMinor: 50000, includeInSafeToSpend: true },
   });
   assert.equal(accRes.status, 201);
@@ -134,7 +165,7 @@ test('In-app management APIs: create category, update monthly cap, create recurr
   const catRes = await invokeHandler(handler, {
     method: 'POST',
     url: '/api/categories',
-    headers: { 'content-type': 'application/json', 'x-user-id': personalUserId },
+    headers: { 'content-type': 'application/json', cookie: personalCookie },
     body: { name: 'Subscriptions', kind: 'EXPENSE', monthlyCapMinor: 10000, color: '#8b5cf6' },
   });
   assert.equal(catRes.status, 201);
@@ -145,7 +176,7 @@ test('In-app management APIs: create category, update monthly cap, create recurr
   const capRes = await invokeHandler(handler, {
     method: 'POST',
     url: `/api/categories/${catData.category.id}/cap`,
-    headers: { 'content-type': 'application/json', 'x-user-id': personalUserId },
+    headers: { 'content-type': 'application/json', cookie: personalCookie },
     body: { monthlyCapMinor: 15000 },
   });
   assert.equal(capRes.status, 200);
@@ -155,7 +186,7 @@ test('In-app management APIs: create category, update monthly cap, create recurr
   const incCatRes = await invokeHandler(handler, {
     method: 'POST',
     url: '/api/categories',
-    headers: { 'content-type': 'application/json', 'x-user-id': personalUserId },
+    headers: { 'content-type': 'application/json', cookie: personalCookie },
     body: { name: 'Freelance', kind: 'INCOME', monthlyCapMinor: null, color: '#14b8a6' },
   });
   assert.equal(incCatRes.status, 201);
@@ -166,7 +197,7 @@ test('In-app management APIs: create category, update monthly cap, create recurr
   const recRes = await invokeHandler(handler, {
     method: 'POST',
     url: '/api/recurring',
-    headers: { 'content-type': 'application/json', 'x-user-id': personalUserId },
+    headers: { 'content-type': 'application/json', cookie: personalCookie },
     body: {
       title: 'Spotify Duo',
       type: 'EXPENSE',

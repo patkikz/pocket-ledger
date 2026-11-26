@@ -4,9 +4,11 @@ import crypto from 'node:crypto';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import { Readable } from 'node:stream';
 import { DatabaseSync } from 'node:sqlite';
 import { createLedgerDb } from '../src/ledger.mjs';
 import { seedDefaultTenants } from '../src/seed.mjs';
+import { createAppHandler } from '../src/server.mjs';
 
 test('registerUser normalizes email, hashes password with scrypt, and seeds 5 starter categories with 0 accounts', () => {
   const ledger = createLedgerDb(':memory:');
@@ -173,4 +175,270 @@ test('seedDefaultTenants skips demo seeding when disableDemo is true on a fresh 
   assert.equal(res.demoUserId, null);
   assert.equal(ledger.getUser('user-demo-primary'), null);
   assert.equal(ledger.getUser('user-demo-secondary'), null);
+});
+
+function invokeHandler(handler, { method = 'GET', url = '/', headers = {}, body = null } = {}) {
+  return new Promise((resolve, reject) => {
+    const payloadStr = body ? JSON.stringify(body) : '';
+    const req = Readable.from(payloadStr ? [Buffer.from(payloadStr)] : []);
+    req.method = method;
+    req.url = url;
+    req.headers = headers;
+
+    const resHeaders = {};
+    let statusCode = 200;
+    const chunks = [];
+
+    const res = {
+      writeHead(code, hdrs = {}) {
+        statusCode = code;
+        for (const [k, v] of Object.entries(hdrs)) {
+          resHeaders[k.toLowerCase()] = v;
+        }
+      },
+      end(data) {
+        if (data) {
+          chunks.push(Buffer.isBuffer(data) ? data : Buffer.from(String(data)));
+        }
+        const text = Buffer.concat(chunks).toString('utf8');
+        resolve({
+          status: statusCode,
+          headers: resHeaders,
+          text,
+          json() {
+            return JSON.parse(text);
+          },
+        });
+      },
+    };
+
+    Promise.resolve(handler(req, res)).catch(reject);
+  });
+}
+
+function extractSessionCookie(res) {
+  const raw = res.headers['set-cookie'];
+  const headerVal = Array.isArray(raw) ? raw.find((c) => c.startsWith('pl_session=')) : raw;
+  assert.ok(headerVal, 'Expected Set-Cookie header for pl_session');
+  const pair = headerVal.split(';')[0];
+  return { pair, full: headerVal };
+}
+
+test('HTTP auth gate: protected API routes return 401 without cookie and ignore x-user-id / ?userId=', async () => {
+  const { handler, demoUserId } = createAppHandler({ dbPath: ':memory:' });
+
+  const noAuth = await invokeHandler(handler, { method: 'GET', url: '/api/dashboard' });
+  assert.equal(noAuth.status, 401);
+
+  const headerSpoof = await invokeHandler(handler, {
+    method: 'GET',
+    url: '/api/dashboard',
+    headers: { 'x-user-id': demoUserId },
+  });
+  assert.equal(headerSpoof.status, 401);
+
+  const querySpoof = await invokeHandler(handler, {
+    method: 'GET',
+    url: `/api/dashboard?userId=${encodeURIComponent(demoUserId)}`,
+  });
+  assert.equal(querySpoof.status, 401);
+
+  const csvNoAuth = await invokeHandler(handler, {
+    method: 'GET',
+    url: '/api/export.csv',
+    headers: { 'x-user-id': demoUserId },
+  });
+  assert.equal(csvNoAuth.status, 401);
+});
+
+test('HTTP POST /api/auth/register creates user, sets pl_session cookie, and authenticates /api/dashboard', async () => {
+  const { handler } = createAppHandler({ dbPath: ':memory:' });
+
+  const badRes = await invokeHandler(handler, {
+    method: 'POST',
+    url: '/api/auth/register',
+    headers: { 'content-type': 'application/json' },
+    body: { email: 'newuser@example.com', password: 'short' },
+  });
+  assert.equal(badRes.status, 400);
+
+  const regRes = await invokeHandler(handler, {
+    method: 'POST',
+    url: '/api/auth/register',
+    headers: { 'content-type': 'application/json' },
+    body: {
+      email: 'NewUser@Example.com',
+      password: 'password123',
+      homeCurrencyCode: 'EUR',
+      budgetCycleStartDay: 5,
+    },
+  });
+  assert.equal(regRes.status, 201);
+  const regJson = regRes.json();
+  assert.equal(regJson.user.email, 'newuser@example.com');
+  assert.equal(regJson.user.homeCurrencyCode, 'EUR');
+  assert.equal(regJson.user.budgetCycleStartDay, 5);
+  assert.equal('passwordHash' in regJson.user, false);
+  assert.equal('password_hash' in regJson.user, false);
+
+  const { pair, full } = extractSessionCookie(regRes);
+  assert.match(full, /HttpOnly/);
+  assert.match(full, /SameSite=Lax/);
+  assert.match(full, /Max-Age=2592000/);
+
+  const dupRes = await invokeHandler(handler, {
+    method: 'POST',
+    url: '/api/auth/register',
+    headers: { 'content-type': 'application/json' },
+    body: { email: 'newuser@example.com', password: 'password123' },
+  });
+  assert.equal(dupRes.status, 409);
+
+  const dashRes = await invokeHandler(handler, {
+    method: 'GET',
+    url: '/api/dashboard?date=2026-11-26',
+    headers: { cookie: pair },
+  });
+  assert.equal(dashRes.status, 200);
+  const dash = dashRes.json();
+  assert.equal(dash.user.id, regJson.user.id);
+  assert.equal('availableTenants' in dash, false);
+
+  // Reverse-proxy HTTPS sets Secure attribute on cookie
+  const httpsRegRes = await invokeHandler(handler, {
+    method: 'POST',
+    url: '/api/auth/register',
+    headers: {
+      'content-type': 'application/json',
+      'x-forwarded-proto': 'https',
+    },
+    body: { email: 'httpsuser@example.com', password: 'password123' },
+  });
+  assert.equal(httpsRegRes.status, 201);
+  const { full: httpsCookie } = extractSessionCookie(httpsRegRes);
+  assert.match(httpsCookie, /;\s*Secure/);
+});
+
+test('HTTP POST /api/auth/login, GET /api/auth/me, sliding renewal, and POST /api/auth/logout lifecycle', async () => {
+  const { handler, ledger } = createAppHandler({ dbPath: ':memory:' });
+
+  const meLoggedOut = await invokeHandler(handler, { method: 'GET', url: '/api/auth/me' });
+  assert.equal(meLoggedOut.status, 200);
+  assert.deepEqual(meLoggedOut.json(), {
+    authenticated: false,
+    user: null,
+    demoEnabled: true,
+  });
+
+  const badLogin = await invokeHandler(handler, {
+    method: 'POST',
+    url: '/api/auth/login',
+    headers: { 'content-type': 'application/json' },
+    body: { email: 'patrick@pocketledger.app', password: 'wrong-password' },
+  });
+  assert.equal(badLogin.status, 401);
+  assert.equal(badLogin.headers['set-cookie'], undefined);
+
+  const goodLogin = await invokeHandler(handler, {
+    method: 'POST',
+    url: '/api/auth/login',
+    headers: { 'content-type': 'application/json' },
+    body: { email: 'patrick@pocketledger.app', password: 'pocketledger-demo' },
+  });
+  assert.equal(goodLogin.status, 200);
+  const loginJson = goodLogin.json();
+  assert.equal(loginJson.user.email, 'patrick@pocketledger.app');
+  const { pair } = extractSessionCookie(goodLogin);
+
+  const meLoggedIn = await invokeHandler(handler, {
+    method: 'GET',
+    url: '/api/auth/me',
+    headers: { cookie: pair },
+  });
+  assert.equal(meLoggedIn.status, 200);
+  assert.deepEqual(meLoggedIn.json(), {
+    authenticated: true,
+    user: loginJson.user,
+    demoEnabled: true,
+  });
+
+  // Force session expiry under 15 days to verify sliding renewal Set-Cookie on protected request
+  const tenDaysFromNow = new Date(Date.now() + 10 * 24 * 60 * 60 * 1000).toISOString();
+  ledger.db.prepare('UPDATE sessions SET expires_at = ? WHERE user_id = ?').run(tenDaysFromNow, loginJson.user.id);
+  const renewedDash = await invokeHandler(handler, {
+    method: 'GET',
+    url: '/api/dashboard',
+    headers: { cookie: pair },
+  });
+  assert.equal(renewedDash.status, 200);
+  const { full: renewedCookie } = extractSessionCookie(renewedDash);
+  assert.match(renewedCookie, /Max-Age=2592000/);
+
+  // Logout deletes session and clears cookie
+  const logoutRes = await invokeHandler(handler, {
+    method: 'POST',
+    url: '/api/auth/logout',
+    headers: { cookie: pair },
+  });
+  assert.equal(logoutRes.status, 200);
+  assert.deepEqual(logoutRes.json(), { ok: true });
+  const { full: clearedCookie } = extractSessionCookie(logoutRes);
+  assert.match(clearedCookie, /Max-Age=0/);
+
+  // Reusing old cookie now fails with 401
+  const afterLogoutDash = await invokeHandler(handler, {
+    method: 'GET',
+    url: '/api/dashboard',
+    headers: { cookie: pair },
+  });
+  assert.equal(afterLogoutDash.status, 401);
+});
+
+test('DISABLE_DEMO=1 disables demoEnabled in /api/auth/me and rejects demo login with 403', async () => {
+  const prevDisableDemo = process.env.DISABLE_DEMO;
+  process.env.DISABLE_DEMO = '1';
+  try {
+    const { handler, demoUserId } = createAppHandler({ dbPath: ':memory:' });
+    assert.equal(demoUserId, null);
+
+    const meRes = await invokeHandler(handler, { method: 'GET', url: '/api/auth/me' });
+    assert.equal(meRes.status, 200);
+    assert.deepEqual(meRes.json(), {
+      authenticated: false,
+      user: null,
+      demoEnabled: false,
+    });
+
+    const demoLogin = await invokeHandler(handler, {
+      method: 'POST',
+      url: '/api/auth/login',
+      headers: { 'content-type': 'application/json' },
+      body: { email: 'patrick@pocketledger.app', password: 'pocketledger-demo' },
+    });
+    assert.equal(demoLogin.status, 403);
+
+    const regRes = await invokeHandler(handler, {
+      method: 'POST',
+      url: '/api/auth/register',
+      headers: { 'content-type': 'application/json' },
+      body: { email: 'solo@example.com', password: 'password123' },
+    });
+    assert.equal(regRes.status, 201);
+    const { pair } = extractSessionCookie(regRes);
+
+    const meAuthed = await invokeHandler(handler, {
+      method: 'GET',
+      url: '/api/auth/me',
+      headers: { cookie: pair },
+    });
+    assert.equal(meAuthed.status, 200);
+    assert.equal(meAuthed.json().authenticated, true);
+    assert.equal(meAuthed.json().demoEnabled, false);
+  } finally {
+    if (prevDisableDemo === undefined) {
+      delete process.env.DISABLE_DEMO;
+    } else {
+      process.env.DISABLE_DEMO = prevDisableDemo;
+    }
+  }
 });
