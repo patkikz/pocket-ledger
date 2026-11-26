@@ -1,0 +1,236 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, interactive-widget=resizes-content" />
+  <meta name="theme-color" media="(prefers-color-scheme: light)" content="#090d16" />
+  <meta name="theme-color" media="(prefers-color-scheme: dark)" content="#090d16" />
+  <link rel="manifest" href="/manifest.json" />
+  <title>PocketLedger V1 — Zero-Drift ACID Budget & Quick-Entry PWA</title>
+  <link rel="stylesheet" href="/styles.css" />
+</head>
+<body>
+  <header class="topbar">
+    <div class="brand-group">
+      <div class="brand-logo">PL</div>
+      <div>
+        <div style="display:flex;align-items:center;gap:0.5rem;">
+          <span class="brand-title">PocketLedger V1</span>
+          <span class="brand-badge" id="acidAuditBadge">ACID 0-Cent Drift Verified</span>
+        </div>
+        <div style="font-size:0.74rem;color:var(--text-secondary);" id="cycleWindowLabel">Loading budget cycle...</div>
+      </div>
+    </div>
+
+    <div class="topbar-controls">
+      <label style="font-size:0.75rem;color:var(--text-secondary);">
+        Tenant:
+        <select id="tenantSelect" class="select-pill" aria-label="Switch isolated tenant"></select>
+      </label>
+      <label style="font-size:0.75rem;color:var(--text-secondary);">
+        Cycle Start Day:
+        <select id="cycleStartDaySelect" class="select-pill" aria-label="Budget cycle start day">
+          <option value="1">1st of Month</option>
+          <option value="5">5th of Month</option>
+          <option value="10">10th of Month</option>
+          <option value="15">15th of Month (Mid-Month Payroll)</option>
+          <option value="25">25th of Month</option>
+        </select>
+      </label>
+      <a id="csvExportLink" href="/api/export.csv" class="btn-secondary" download>
+        Export 100% CSV Ledger
+      </a>
+    </div>
+  </header>
+
+  <main class="workspace">
+    <!-- LEFT DOCK: Mobile Sub-5-Second Quick-Entry Keypad (Criterion #3) -->
+    <section class="quick-entry-dock" aria-label="Mobile Quick Entry Keypad">
+      <div class="dock-header">
+        <span class="dock-label">Mobile POS Quick Entry (&lt;5s)</span>
+        <span class="tap-counter-pill" id="tapCounterPill">0 taps • Smart Defaults Ready</span>
+      </div>
+
+      <div class="mode-tabs" role="tablist">
+        <button type="button" class="tab-btn active" data-tx-type="EXPENSE">Expense</button>
+        <button type="button" class="tab-btn" data-tx-type="REFUND">Refund</button>
+        <button type="button" class="tab-btn" data-tx-type="INCOME">Income</button>
+        <button type="button" class="tab-btn" data-tx-type="TRANSFER">Transfer</button>
+      </div>
+
+      <div class="amount-display-box">
+        <div class="amount-Readout" id="keypadAmountReadout">$0.00</div>
+        <div class="amount-subtext">
+          <span id="minorUnitsDebug">0 minor units (64-bit integer)</span>
+          <span id="typeHintText">Deducts from account &amp; category cap</span>
+        </div>
+      </div>
+
+      <!-- Smart Default Source Account Strip -->
+      <div class="selector-section">
+        <div class="selector-title">
+          <span id="sourceAccountLabel">Account (Smart Default: Last Used)</span>
+        </div>
+        <div class="chip-strip" id="sourceAccountStrip"></div>
+      </div>
+
+      <!-- Category Strip (for EXPENSE, REFUND, INCOME) -->
+      <div class="selector-section" id="categorySection">
+        <div class="selector-title">
+          <span>Category (Sorted by Frequency)</span>
+        </div>
+        <div class="chip-strip" id="categoryStrip"></div>
+      </div>
+
+      <!-- Destination Account Strip (only for TRANSFER) -->
+      <div class="selector-section" id="destinationAccountSection" style="display:none;">
+        <div class="selector-title">
+          <span>Transfer Destination Account (No Category Impact)</span>
+        </div>
+        <div class="chip-strip" id="destinationAccountStrip"></div>
+      </div>
+
+      <div class="note-row">
+        <input
+          type="text"
+          id="txNoteInput"
+          class="input-compact"
+          placeholder="Optional note (e.g. Coffee, Target)"
+          autocomplete="off"
+          enterkeyhint="done"
+        />
+        <input
+          type="date"
+          id="txDateInput"
+          class="input-compact"
+          value="2026-11-26"
+        />
+      </div>
+
+      <div class="numpad-grid" id="numpadGrid">
+        <button type="button" class="key-btn" data-key="1">1</button>
+        <button type="button" class="key-btn" data-key="2">2</button>
+        <button type="button" class="key-btn" data-key="3">3</button>
+        <button type="button" class="key-btn" data-key="4">4</button>
+        <button type="button" class="key-btn" data-key="5">5</button>
+        <button type="button" class="key-btn" data-key="6">6</button>
+        <button type="button" class="key-btn" data-key="7">7</button>
+        <button type="button" class="key-btn" data-key="8">8</button>
+        <button type="button" class="key-btn" data-key="9">9</button>
+        <button type="button" class="key-btn" data-key="00">00</button>
+        <button type="button" class="key-btn" data-key="0">0</button>
+        <button type="button" class="key-btn" data-key="BACKSPACE" aria-label="Backspace">⌫</button>
+      </div>
+
+      <button type="button" class="submit-ledger-btn" id="submitTxBtn">
+        <span>Save Expense Now</span>
+      </button>
+
+      <div id="quickFeedbackBanner" class="quick-feedback hidden" role="status"></div>
+    </section>
+
+    <!-- RIGHT WORKSPACE: Desktop Cash-Flow, Reactive Category Caps & Reconciliation -->
+    <section class="dashboard-main">
+      <!-- Top Cash-Flow & Safe-to-Spend KPIs -->
+      <div class="kpi-grid">
+        <div class="kpi-card highlight-safe">
+          <div class="kpi-label">
+            <span>Safe to Spend</span>
+            <span style="color:#34d399;">Liquid − Due Bills</span>
+          </div>
+          <div class="kpi-value" id="kpiSafeToSpend">$0.00</div>
+          <div class="kpi-sub" id="kpiSafeSub">Checking/E-Wallets minus upcoming cycle bills</div>
+        </div>
+
+        <div class="kpi-card">
+          <div class="kpi-label">
+            <span>Cycle Net Spent</span>
+            <span>Expenses − Refunds</span>
+          </div>
+          <div class="kpi-value" id="kpiTotalSpent">$0.00</div>
+          <div class="kpi-sub" id="kpiSpentCapSub">Transfers excluded ($0.00 impact)</div>
+        </div>
+
+        <div class="kpi-card">
+          <div class="kpi-label">
+            <span>Cycle Income</span>
+            <span>Posted Inflows</span>
+          </div>
+          <div class="kpi-value" id="kpiTotalIncome" style="color:var(--accent-emerald);">$0.00</div>
+          <div class="kpi-sub">Refunds never inflate income</div>
+        </div>
+
+        <div class="kpi-card">
+          <div class="kpi-label">
+            <span>Total Net Liquidity</span>
+            <span>All Wallets − Card Debt</span>
+          </div>
+          <div class="kpi-value" id="kpiNetLiquidity">$0.00</div>
+          <div class="kpi-sub" id="kpiCardDebtSub">Credit Card Debt: $0.00</div>
+        </div>
+      </div>
+
+      <!-- 1-Tap Recurring Reminders Panel -->
+      <div class="panel-card" id="recurringPanel">
+        <div class="panel-header">
+          <div>
+            <div class="panel-title">Upcoming Recurring Bills &amp; Subscriptions (1-Tap Confirmation)</div>
+            <div class="panel-subtitle">No silent background ghost deductions — confirm with 1 tap when paid</div>
+          </div>
+        </div>
+        <div class="recurring-list" id="recurringList"></div>
+      </div>
+
+      <!-- Real-World Accounts & Weekly Balance Reconciliation -->
+      <div class="panel-card">
+        <div class="panel-header">
+          <div>
+            <div class="panel-title">Real-World Accounts &amp; Weekly Reconciliation</div>
+            <div class="panel-subtitle">Every account balance is mathematically verified against SUM(ledger_entries)</div>
+          </div>
+        </div>
+        <div class="accounts-grid" id="accountsGrid"></div>
+      </div>
+
+      <!-- Reactive Monthly Category Caps -->
+      <div class="panel-card">
+        <div class="panel-header">
+          <div>
+            <div class="panel-title">Reactive Category Spending Caps</div>
+            <div class="panel-subtitle">Resets to zero at each cycle boundary • Refunds deduct directly from category spend</div>
+          </div>
+        </div>
+        <div class="category-list" id="categoryCapsGrid"></div>
+      </div>
+
+      <!-- Immutable Audit Ledger & Soft-Void History -->
+      <div class="panel-card">
+        <div class="panel-header">
+          <div>
+            <div class="panel-title">Immutable Transaction Ledger (Audit Trail)</div>
+            <div class="panel-subtitle">Soft-voiding preserves historical record while recalculating balances atomically</div>
+          </div>
+        </div>
+        <div class="ledger-table-wrap">
+          <table class="ledger-table">
+            <thead>
+              <tr>
+                <th>Date</th>
+                <th>Type</th>
+                <th>Account Flow</th>
+                <th>Category</th>
+                <th>Note</th>
+                <th style="text-align:right;">Amount</th>
+                <th style="text-align:right;">Audit Action</th>
+              </tr>
+            </thead>
+            <tbody id="ledgerTableBody"></tbody>
+          </table>
+        </div>
+      </div>
+    </section>
+  </main>
+
+  <script type="module" src="/app.js"></script>
+</body>
+</html>

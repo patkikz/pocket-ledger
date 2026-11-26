@@ -1,0 +1,9 @@
+{
+  "name": "PocketLedger V1",
+  "short_name": "PocketLedger",
+  "description": "Sub-5-second mobile expense keypad & zero-drift ACID desktop ledger",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#090d16",
+  "theme_color": "#090d16"
+}
