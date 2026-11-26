@@ -1,7 +1,14 @@
 export function seedDefaultTenants(ledger) {
   const existing = ledger.getUser('user-demo-primary');
   if (existing) {
-    return { demoUserId: existing.id, secondUserId: 'user-demo-secondary' };
+    if (!ledger.getUser('user-personal')) {
+      seedPersonalProfile(ledger);
+    }
+    return {
+      demoUserId: existing.id,
+      secondUserId: 'user-demo-secondary',
+      personalUserId: 'user-personal',
+    };
   }
 
   // Tenant A: Primary user
@@ -232,5 +239,63 @@ export function seedDefaultTenants(ledger) {
     note: 'GrabFood dinner',
   });
 
-  return { demoUserId: userA.id, secondUserId: userB.id, bpiChecking };
+  seedPersonalProfile(ledger);
+
+  return {
+    demoUserId: userA.id,
+    secondUserId: userB.id,
+    personalUserId: 'user-personal',
+    bpiChecking,
+  };
+}
+
+function seedPersonalProfile(ledger) {
+  const personal = ledger.createUser({
+    id: 'user-personal',
+    email: 'me@pocketledger.app',
+    homeCurrencyCode: 'USD',
+    budgetCycleStartDay: 1,
+  });
+
+  ledger.createCategory(personal.id, {
+    id: 'cat-personal-groceries',
+    name: 'Groceries',
+    kind: 'EXPENSE',
+    monthlyCapMinor: 50000,
+    icon: 'shopping-bag',
+    color: '#10b981',
+  });
+  ledger.createCategory(personal.id, {
+    id: 'cat-personal-dining',
+    name: 'Dining & Coffee',
+    kind: 'EXPENSE',
+    monthlyCapMinor: 30000,
+    icon: 'utensils',
+    color: '#f59e0b',
+  });
+  ledger.createCategory(personal.id, {
+    id: 'cat-personal-transport',
+    name: 'Transport',
+    kind: 'EXPENSE',
+    monthlyCapMinor: 20000,
+    icon: 'car',
+    color: '#3b82f6',
+  });
+  ledger.createCategory(personal.id, {
+    id: 'cat-personal-bills',
+    name: 'Bills & Subs',
+    kind: 'EXPENSE',
+    monthlyCapMinor: 100000,
+    icon: 'zap',
+    color: '#8b5cf6',
+  });
+  ledger.createCategory(personal.id, {
+    id: 'cat-personal-salary',
+    name: 'Income / Paycheck',
+    kind: 'INCOME',
+    icon: 'briefcase',
+    color: '#14b8a6',
+  });
+
+  return personal;
 }

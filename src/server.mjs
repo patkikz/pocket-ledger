@@ -45,7 +45,7 @@ function sendJson(res, statusCode, payload) {
 
 export function createAppHandler({ dbPath = path.join(__dirname, '..', 'pocket-ledger.sqlite') } = {}) {
   const ledger = createLedgerDb(dbPath);
-  const { demoUserId, secondUserId } = seedDefaultTenants(ledger);
+  const { demoUserId, secondUserId, personalUserId } = seedDefaultTenants(ledger);
 
   const handler = async (req, res) => {
     try {
@@ -66,8 +66,9 @@ export function createAppHandler({ dbPath = path.join(__dirname, '..', 'pocket-l
             ...dash,
             integrityAudits,
             availableTenants: [
-              { id: demoUserId, label: 'Patrick (USD • Cycle Start 1st)' },
-              { id: secondUserId, label: 'Alex (PHP • Cycle Start 15th)' },
+              { id: demoUserId, label: 'Demo: Patrick (USD • 1st)' },
+              { id: secondUserId, label: 'Demo: Alex (PHP • 15th)' },
+              { id: personalUserId, label: 'My Personal Budget (Clean Slate)' },
             ],
           });
         }
@@ -142,6 +143,43 @@ export function createAppHandler({ dbPath = path.join(__dirname, '..', 'pocket-l
           return sendJson(res, 201, { account });
         }
 
+        if (req.method === 'POST' && url.pathname === '/api/categories') {
+          const body = await readJsonBody(req);
+          const category = ledger.createCategory(userId, {
+            name: body.name,
+            kind: body.kind || 'EXPENSE',
+            monthlyCapMinor: body.monthlyCapMinor !== null && body.monthlyCapMinor !== undefined ? Number(body.monthlyCapMinor) : null,
+            color: body.color || '#6366f1',
+          });
+          return sendJson(res, 201, { category });
+        }
+
+        const catCapMatch = url.pathname.match(/^\/api\/categories\/([^/]+)\/cap$/);
+        if (req.method === 'POST' && catCapMatch) {
+          const categoryId = catCapMatch[1];
+          const body = await readJsonBody(req);
+          const category = ledger.updateCategoryCap(
+            userId,
+            categoryId,
+            body.monthlyCapMinor !== null && body.monthlyCapMinor !== undefined ? Number(body.monthlyCapMinor) : null
+          );
+          return sendJson(res, 200, { category });
+        }
+
+        if (req.method === 'POST' && url.pathname === '/api/recurring') {
+          const body = await readJsonBody(req);
+          const rule = ledger.createRecurringRule(userId, {
+            title: body.title,
+            type: body.type || 'EXPENSE',
+            defaultAmountMinor: Number(body.defaultAmountMinor),
+            accountId: body.accountId,
+            categoryId: body.categoryId || null,
+            frequency: body.frequency || 'MONTHLY',
+            nextDueDate: body.nextDueDate,
+          });
+          return sendJson(res, 201, { rule });
+        }
+
         if (req.method === 'POST' && url.pathname === '/api/settings') {
           const body = await readJsonBody(req);
           const updatedUser = ledger.updateUserSettings(userId, {
@@ -179,13 +217,13 @@ export function createAppHandler({ dbPath = path.join(__dirname, '..', 'pocket-l
     }
   };
 
-  return { handler, ledger, demoUserId, secondUserId };
+  return { handler, ledger, demoUserId, secondUserId, personalUserId };
 }
 
 export function createAppServer(opts = {}) {
-  const { handler, ledger, demoUserId, secondUserId } = createAppHandler(opts);
+  const { handler, ledger, demoUserId, secondUserId, personalUserId } = createAppHandler(opts);
   const server = http.createServer(handler);
-  return { server, handler, ledger, demoUserId, secondUserId };
+  return { server, handler, ledger, demoUserId, secondUserId, personalUserId };
 }
 
 if (process.argv[1] && path.resolve(process.argv[1]) === __filename) {

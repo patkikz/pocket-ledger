@@ -1,8 +1,10 @@
 const state = {
   userId: 'user-demo-primary',
   currencyCode: 'USD',
+  referenceDate: '2026-11-26',
   activeView: 'home',
   historyFilter: 'ALL',
+  searchQuery: '',
   txType: 'EXPENSE',
   digitsMinor: 0,
   selectedAccountId: null,
@@ -48,20 +50,24 @@ function switchView(viewName) {
   });
 }
 
-function openQuickEntry() {
-  document.getElementById('quickEntryOverlay').classList.remove('hidden');
+function openModal(id) {
+  document.getElementById(id).classList.remove('hidden');
 }
 
-function closeQuickEntry() {
-  document.getElementById('quickEntryOverlay').classList.add('hidden');
+function closeModal(id) {
+  document.getElementById(id).classList.add('hidden');
 }
 
-function openSettings() {
-  document.getElementById('settingsOverlay').classList.remove('hidden');
+function closeAllModals() {
+  document.querySelectorAll('.modal-overlay').forEach((el) => el.classList.add('hidden'));
 }
 
-function closeSettings() {
-  document.getElementById('settingsOverlay').classList.add('hidden');
+function shiftReferenceMonth(deltaMonths) {
+  const [y, m, d] = state.referenceDate.split('-').map(Number);
+  const dt = new Date(Date.UTC(y, m - 1 + deltaMonths, Math.min(d, 28)));
+  state.referenceDate = dt.toISOString().slice(0, 10);
+  document.getElementById('txDateInput').value = state.referenceDate;
+  fetchDashboard();
 }
 
 function updateKeypadReadout() {
@@ -86,8 +92,7 @@ function syncCategorySelection() {
 }
 
 async function fetchDashboard() {
-  const dateVal = document.getElementById('txDateInput').value || '2026-11-26';
-  const res = await fetch(`/api/dashboard?date=${encodeURIComponent(dateVal)}`, {
+  const res = await fetch(`/api/dashboard?date=${encodeURIComponent(state.referenceDate)}`, {
     headers: { 'x-user-id': state.userId },
   });
   const data = await res.json();
@@ -108,9 +113,9 @@ async function fetchDashboard() {
   renderAll();
 }
 
-function renderTxItems(transactions, containerEl, { showUndo = false } = {}) {
+function renderTxItems(transactions, containerEl, { showUndo = false, emptyMsg = 'No transactions yet.' } = {}) {
   if (transactions.length === 0) {
-    containerEl.innerHTML = `<div class="tx-item"><span class="tx-sub">No transactions yet.</span></div>`;
+    containerEl.innerHTML = `<div class="tx-item"><span class="tx-sub">${emptyMsg}</span></div>`;
     return;
   }
 
@@ -154,12 +159,16 @@ function renderAll() {
   // Header & Settings
   document.getElementById('cycleWindowLabel').textContent = `${d.cycleStart} to ${d.cycleEnd}`;
   document.getElementById('cycleStartDaySelect').value = String(d.user.budgetCycleStartDay);
+  document.getElementById('currencySelect').value = d.user.homeCurrencyCode;
   document.getElementById('csvExportLink').href = `/api/export.csv?userId=${encodeURIComponent(state.userId)}`;
 
   const tenantSelect = document.getElementById('tenantSelect');
   tenantSelect.innerHTML = d.availableTenants
     .map((t) => `<option value="${t.id}" ${t.id === state.userId ? 'selected' : ''}>${t.label}</option>`)
     .join('');
+
+  // Empty-state onboarding callout if user has no accounts yet
+  document.getElementById('emptyAccountCallout').classList.toggle('hidden', d.accounts.length > 0);
 
   // Hero Safe-to-Spend & Summary
   document.getElementById('kpiSafeToSpend').textContent = formatMoney(d.safeToSpendMinor);
@@ -171,14 +180,13 @@ function renderAll() {
   document.getElementById('kpiTotalIncome').textContent = formatMoney(d.totalIncomeMinor);
   document.getElementById('kpiCardDebt').textContent = formatMoney(d.creditCardDebtMinor);
 
-  // Due Soon Bills (Hide section completely if no active recurring rules)
-  const recurringSec = document.getElementById('recurringSection');
+  // Due Soon Recurring Bills
   const dueRules = d.dueRecurringRules.filter((r) => r.isDueInCycle);
+  const recurringList = document.getElementById('recurringList');
   if (dueRules.length === 0) {
-    recurringSec.classList.add('hidden');
+    recurringList.innerHTML = `<div class="tx-card-list"><div class="tx-item"><span class="tx-sub">No upcoming bills due this cycle.</span></div></div>`;
   } else {
-    recurringSec.classList.remove('hidden');
-    document.getElementById('recurringList').innerHTML = dueRules
+    recurringList.innerHTML = dueRules
       .map(
         (r) => `<div class="bill-card">
           <div>
@@ -194,7 +202,7 @@ function renderAll() {
       .join('');
   }
 
-  // Monthly Budgets
+  // Monthly Budgets (Click any card to edit its monthly limit)
   document.getElementById('categoryCapsGrid').innerHTML = d.categories
     .filter((c) => c.kind === 'EXPENSE')
     .map((c) => {
@@ -206,7 +214,7 @@ function renderAll() {
         c.remainingCapMinor >= 0
           ? `${formatMoney(c.remainingCapMinor)} left`
           : `${formatMoney(Math.abs(c.remainingCapMinor))} over`;
-      return `<div class="budget-card">
+      return `<button type="button" class="budget-card budget-card-btn" data-edit-cat="${c.id}" data-cat-name="${c.name}" data-cat-cap="${cap}">
         <div class="budget-top">
           <span class="budget-name">${c.name}</span>
           <span class="budget-remaining ${isOver ? 'over' : ''}">${remLabel}</span>
@@ -214,8 +222,8 @@ function renderAll() {
         <div class="progress-track">
           <div class="progress-fill" style="background:${barColor};transform:scaleX(${ratio});"></div>
         </div>
-        <div class="budget-meta">${formatMoney(c.netSpentMinor)} spent of ${formatMoney(cap)}</div>
-      </div>`;
+        <div class="budget-meta">${formatMoney(c.netSpentMinor)} spent of ${formatMoney(cap)} · Tap to edit limit</div>
+      </button>`;
     })
     .join('');
 
@@ -223,40 +231,54 @@ function renderAll() {
   const activeRecent = d.recentTransactions.filter((t) => !t.voidedAt).slice(0, 5);
   renderTxItems(activeRecent, document.getElementById('recentTxList'), { showUndo: false });
 
-  // Activity View: Filtered full list
+  // Activity View: Filtered & searched list
+  const q = state.searchQuery.trim().toLowerCase();
   const filtered = d.recentTransactions.filter((t) => {
-    if (state.historyFilter === 'ALL') return true;
-    if (state.historyFilter === 'EXPENSE') return t.type === 'EXPENSE' || t.type === 'REFUND';
-    return t.type === state.historyFilter;
+    if (state.historyFilter === 'EXPENSE' && t.type !== 'EXPENSE' && t.type !== 'REFUND') return false;
+    if (state.historyFilter !== 'ALL' && state.historyFilter !== 'EXPENSE' && t.type !== state.historyFilter) return false;
+    if (!q) return true;
+    const hay = `${t.note || ''} ${t.categoryName || ''} ${t.accountName || ''} ${t.transferDestinationAccountName || ''}`.toLowerCase();
+    return hay.includes(q);
   });
-  renderTxItems(filtered, document.getElementById('fullTxList'), { showUndo: true });
+  renderTxItems(filtered, document.getElementById('fullTxList'), {
+    showUndo: true,
+    emptyMsg: q ? 'No matching transactions found.' : 'No transactions yet.',
+  });
 
   // Accounts View
   document.getElementById('netLiquidityLabel').textContent = `Total Net Liquidity: ${formatMoney(d.netLiquidityMinor)}`;
-  document.getElementById('accountsGrid').innerHTML = d.accounts
-    .map((a) => {
-      const typeLabel =
-        a.type === 'CASH_CHECKING' ? 'Cash / Checking' : a.type === 'SAVINGS' ? 'Savings' : 'Credit Card';
-      return `<div class="account-card">
-        <div class="account-header">
-          <span class="account-name">${a.name}</span>
-          <span class="account-type">${typeLabel}</span>
-        </div>
-        <div class="account-balance ${a.cachedBalanceMinor < 0 ? 'negative' : ''}">${formatMoney(a.cachedBalanceMinor)}</div>
-        <button type="button" class="btn-secondary" style="justify-content:center;" data-reconcile-acc="${a.id}" data-acc-name="${a.name}" data-acc-bal="${a.cachedBalanceMinor}">
-          Update Balance
-        </button>
-      </div>`;
-    })
-    .join('');
+  const accountsGrid = document.getElementById('accountsGrid');
+  if (d.accounts.length === 0) {
+    accountsGrid.innerHTML = `<div class="account-card"><p class="tx-sub">No accounts yet. Click "+ Add Account" to get started.</p></div>`;
+  } else {
+    accountsGrid.innerHTML = d.accounts
+      .map((a) => {
+        const typeLabel =
+          a.type === 'CASH_CHECKING' ? 'Cash / Checking' : a.type === 'SAVINGS' ? 'Savings' : 'Credit Card';
+        return `<div class="account-card">
+          <div class="account-header">
+            <span class="account-name">${a.name}</span>
+            <span class="account-type">${typeLabel}</span>
+          </div>
+          <div class="account-balance ${a.cachedBalanceMinor < 0 ? 'negative' : ''}">${formatMoney(a.cachedBalanceMinor)}</div>
+          <button type="button" class="btn-secondary" style="justify-content:center;" data-reconcile-acc="${a.id}" data-acc-name="${a.name}" data-acc-bal="${a.cachedBalanceMinor}">
+            Update Balance
+          </button>
+        </div>`;
+      })
+      .join('');
+  }
 
   // Quick-Entry Modal Chips
-  document.getElementById('sourceAccountStrip').innerHTML = d.accounts
-    .map((a) => {
-      const sel = a.id === state.selectedAccountId ? 'selected' : '';
-      return `<button type="button" class="chip ${sel}" data-source-acc="${a.id}">${a.name}</button>`;
-    })
-    .join('');
+  document.getElementById('sourceAccountStrip').innerHTML =
+    d.accounts.length === 0
+      ? `<span class="tx-sub">Add an account first</span>`
+      : d.accounts
+          .map((a) => {
+            const sel = a.id === state.selectedAccountId ? 'selected' : '';
+            return `<button type="button" class="chip ${sel}" data-source-acc="${a.id}">${a.name}</button>`;
+          })
+          .join('');
 
   const categorySection = document.getElementById('categorySection');
   const destSection = document.getElementById('destinationAccountSection');
@@ -294,26 +316,82 @@ document.querySelectorAll('.nav-tab').forEach((tab) => {
   tab.addEventListener('click', () => switchView(tab.dataset.view));
 });
 document.getElementById('seeAllActivityBtn').addEventListener('click', () => switchView('history'));
-document.getElementById('openQuickEntryBtn').addEventListener('click', openQuickEntry);
-document.getElementById('heroLogBtn').addEventListener('click', openQuickEntry);
-document.getElementById('closeQuickEntryBtn').addEventListener('click', closeQuickEntry);
-document.getElementById('openSettingsBtn').addEventListener('click', openSettings);
-document.getElementById('closeSettingsBtn').addEventListener('click', closeSettings);
+document.getElementById('prevCycleBtn').addEventListener('click', () => shiftReferenceMonth(-1));
+document.getElementById('nextCycleBtn').addEventListener('click', () => shiftReferenceMonth(1));
 
-document.getElementById('quickEntryOverlay').addEventListener('click', (e) => {
-  if (e.target.id === 'quickEntryOverlay') closeQuickEntry();
+document.getElementById('openQuickEntryBtn').addEventListener('click', () => openModal('quickEntryOverlay'));
+document.getElementById('heroLogBtn').addEventListener('click', () => openModal('quickEntryOverlay'));
+document.getElementById('openSettingsBtn').addEventListener('click', () => openModal('settingsOverlay'));
+document.getElementById('openAddAccountBtn').addEventListener('click', () => openModal('addAccountOverlay'));
+document.getElementById('emptyAddAccountBtn').addEventListener('click', () => openModal('addAccountOverlay'));
+
+document.getElementById('openAddCategoryBtn').addEventListener('click', () => {
+  document.getElementById('categoryModalTitle').textContent = 'Add Category';
+  document.getElementById('editCategoryId').value = '';
+  document.getElementById('newCatNameGroup').style.display = 'flex';
+  document.getElementById('newCatName').required = true;
+  document.getElementById('newCatName').value = '';
+  document.getElementById('newCatCap').value = '';
+  openModal('categoryModalOverlay');
 });
-document.getElementById('settingsOverlay').addEventListener('click', (e) => {
-  if (e.target.id === 'settingsOverlay') closeSettings();
+
+document.getElementById('openAddRecurringBtn').addEventListener('click', () => {
+  const d = state.dashboard;
+  if (!d || d.accounts.length === 0) {
+    showToast('Please add an account first.', true);
+    return;
+  }
+  document.getElementById('newBillAccount').innerHTML = d.accounts
+    .map((a) => `<option value="${a.id}">${a.name}</option>`)
+    .join('');
+  document.getElementById('newBillCategory').innerHTML = d.categories
+    .filter((c) => c.kind === 'EXPENSE')
+    .map((c) => `<option value="${c.id}">${c.name}</option>`)
+    .join('');
+  document.getElementById('newBillDate').value = state.referenceDate;
+  openModal('recurringModalOverlay');
 });
+
+document.querySelectorAll('[data-close-modal]').forEach((btn) => {
+  btn.addEventListener('click', () => closeModal(btn.dataset.closeModal));
+});
+
+document.querySelectorAll('.modal-overlay').forEach((overlay) => {
+  overlay.addEventListener('click', (e) => {
+    if (e.target === overlay) closeModal(overlay.id);
+  });
+});
+
+// Keyboard shortcuts: Escape closes modals; digits/Backspace/Enter work inside Quick Entry
 document.addEventListener('keydown', (e) => {
   if (e.key === 'Escape') {
-    closeQuickEntry();
-    closeSettings();
+    closeAllModals();
+    return;
+  }
+
+  const quickOpen = !document.getElementById('quickEntryOverlay').classList.contains('hidden');
+  if (!quickOpen) return;
+
+  const tag = document.activeElement?.tagName;
+  if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT') return;
+
+  if (/^[0-9]$/.test(e.key)) {
+    e.preventDefault();
+    if (state.digitsMinor <= 99999999) {
+      state.digitsMinor = state.digitsMinor * 10 + Number(e.key);
+      updateKeypadReadout();
+    }
+  } else if (e.key === 'Backspace') {
+    e.preventDefault();
+    state.digitsMinor = Math.floor(state.digitsMinor / 10);
+    updateKeypadReadout();
+  } else if (e.key === 'Enter') {
+    e.preventDefault();
+    document.getElementById('submitTxBtn').click();
   }
 });
 
-// Keypad Input
+// Keypad Touch Input
 document.getElementById('numpadGrid').addEventListener('pointerdown', (e) => {
   const btn = e.target.closest('[data-key]');
   if (!btn) return;
@@ -340,7 +418,7 @@ document.querySelector('.mode-tabs').addEventListener('click', (e) => {
   state.txType = btn.dataset.txType;
 
   const hints = {
-    EXPENSE: 'Counts toward your monthly budget',
+    EXPENSE: 'Counts toward your monthly budget · Type numbers or tap below',
     REFUND: 'Reduces spending in this category',
     INCOME: 'Adds to your account and monthly income',
     TRANSFER: 'Moves money between your accounts without affecting budgets',
@@ -376,6 +454,10 @@ document.getElementById('categoryStrip').addEventListener('click', (e) => {
 });
 
 document.getElementById('submitTxBtn').addEventListener('click', async () => {
+  if (!state.selectedAccountId) {
+    showToast('Please add an account first.', true);
+    return;
+  }
   if (state.digitsMinor <= 0) {
     showToast('Please enter an amount greater than zero.', true);
     return;
@@ -386,7 +468,7 @@ document.getElementById('submitTxBtn').addEventListener('click', async () => {
     accountId: state.selectedAccountId,
     transferDestinationAccountId: state.txType === 'TRANSFER' ? state.selectedDestinationAccountId : null,
     categoryId: state.txType === 'TRANSFER' ? null : state.selectedCategoryId,
-    occurredOn: document.getElementById('txDateInput').value || '2026-11-26',
+    occurredOn: document.getElementById('txDateInput').value || state.referenceDate,
     note: document.getElementById('txNoteInput').value.trim(),
   };
 
@@ -403,7 +485,7 @@ document.getElementById('submitTxBtn').addEventListener('click', async () => {
 
   state.digitsMinor = 0;
   document.getElementById('txNoteInput').value = '';
-  closeQuickEntry();
+  closeModal('quickEntryOverlay');
 
   const remText =
     data.categoryRemainingCapMinor !== null && data.categoryRemainingCapMinor !== undefined
@@ -411,6 +493,123 @@ document.getElementById('submitTxBtn').addEventListener('click', async () => {
       : '';
   showToast(`Saved ${formatMoney(data.transaction.amountMinor)}${remText}`);
   await fetchDashboard();
+});
+
+// Add Account Form
+document.getElementById('addAccountForm').addEventListener('submit', async (e) => {
+  e.preventDefault();
+  const name = document.getElementById('newAccName').value.trim();
+  const type = document.getElementById('newAccType').value;
+  const initialBalanceMinor = Math.round(Number(document.getElementById('newAccBalance').value || 0) * 100);
+
+  const res = await fetch('/api/accounts', {
+    method: 'POST',
+    headers: { 'content-type': 'application/json', 'x-user-id': state.userId },
+    body: JSON.stringify({ name, type, initialBalanceMinor }),
+  });
+  if (res.ok) {
+    document.getElementById('addAccountForm').reset();
+    closeModal('addAccountOverlay');
+    showToast(`Added account "${name}".`);
+    await fetchDashboard();
+  } else {
+    const err = await res.json();
+    showToast(err.error || 'Could not create account.', true);
+  }
+});
+
+// Open Update Balance Modal
+document.getElementById('accountsGrid').addEventListener('click', (e) => {
+  const btn = e.target.closest('[data-reconcile-acc]');
+  if (!btn) return;
+  const accName = btn.dataset.accName;
+  const currentDollars = (Number(btn.dataset.accBal) / 100).toFixed(2);
+  document.getElementById('reconcileAccId').value = btn.dataset.reconcileAcc;
+  document.getElementById('reconcileTitle').textContent = `Update ${accName}`;
+  document.getElementById('reconcileHelper').textContent = `Current balance: ${formatMoney(Number(btn.dataset.accBal))}. Enter the balance shown by your bank.`;
+  document.getElementById('reconcileNewBalance').value = currentDollars;
+  openModal('reconcileOverlay');
+});
+
+document.getElementById('reconcileForm').addEventListener('submit', async (e) => {
+  e.preventDefault();
+  const accountId = document.getElementById('reconcileAccId').value;
+  const actualBalanceMinor = Math.round(Number(document.getElementById('reconcileNewBalance').value) * 100);
+  const res = await fetch('/api/accounts/reconcile', {
+    method: 'POST',
+    headers: { 'content-type': 'application/json', 'x-user-id': state.userId },
+    body: JSON.stringify({ accountId, actualBalanceMinor, occurredOn: state.referenceDate }),
+  });
+  if (res.ok) {
+    closeModal('reconcileOverlay');
+    showToast(`Balance updated to ${formatMoney(actualBalanceMinor)}.`);
+    await fetchDashboard();
+  }
+});
+
+// Edit Monthly Budget Cap or Add Category
+document.getElementById('categoryCapsGrid').addEventListener('click', (e) => {
+  const card = e.target.closest('[data-edit-cat]');
+  if (!card) return;
+  document.getElementById('categoryModalTitle').textContent = `Edit ${card.dataset.catName} Budget`;
+  document.getElementById('editCategoryId').value = card.dataset.editCat;
+  document.getElementById('newCatNameGroup').style.display = 'none';
+  document.getElementById('newCatName').required = false;
+  document.getElementById('newCatCap').value = (Number(card.dataset.catCap) / 100).toFixed(2);
+  openModal('categoryModalOverlay');
+});
+
+document.getElementById('categoryForm').addEventListener('submit', async (e) => {
+  e.preventDefault();
+  const editId = document.getElementById('editCategoryId').value;
+  const monthlyCapMinor = Math.round(Number(document.getElementById('newCatCap').value) * 100);
+
+  if (editId) {
+    const res = await fetch(`/api/categories/${editId}/cap`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', 'x-user-id': state.userId },
+      body: JSON.stringify({ monthlyCapMinor }),
+    });
+    if (res.ok) {
+      closeModal('categoryModalOverlay');
+      showToast('Monthly budget limit updated.');
+      await fetchDashboard();
+    }
+  } else {
+    const name = document.getElementById('newCatName').value.trim();
+    const res = await fetch('/api/categories', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', 'x-user-id': state.userId },
+      body: JSON.stringify({ name, kind: 'EXPENSE', monthlyCapMinor, color: '#6366f1' }),
+    });
+    if (res.ok) {
+      closeModal('categoryModalOverlay');
+      showToast(`Added "${name}" budget.`);
+      await fetchDashboard();
+    }
+  }
+});
+
+// Add Recurring Bill
+document.getElementById('recurringForm').addEventListener('submit', async (e) => {
+  e.preventDefault();
+  const title = document.getElementById('newBillTitle').value.trim();
+  const defaultAmountMinor = Math.round(Number(document.getElementById('newBillAmount').value) * 100);
+  const accountId = document.getElementById('newBillAccount').value;
+  const categoryId = document.getElementById('newBillCategory').value;
+  const nextDueDate = document.getElementById('newBillDate').value;
+
+  const res = await fetch('/api/recurring', {
+    method: 'POST',
+    headers: { 'content-type': 'application/json', 'x-user-id': state.userId },
+    body: JSON.stringify({ title, type: 'EXPENSE', defaultAmountMinor, accountId, categoryId, frequency: 'MONTHLY', nextDueDate }),
+  });
+  if (res.ok) {
+    document.getElementById('recurringForm').reset();
+    closeModal('recurringModalOverlay');
+    showToast(`Added "${title}" bill reminder.`);
+    await fetchDashboard();
+  }
 });
 
 document.getElementById('recurringList').addEventListener('click', async (e) => {
@@ -440,37 +639,6 @@ document.getElementById('recurringList').addEventListener('click', async (e) => 
   }
 });
 
-document.getElementById('accountsGrid').addEventListener('click', async (e) => {
-  const btn = e.target.closest('[data-reconcile-acc]');
-  if (!btn) return;
-  const accName = btn.dataset.accName;
-  const currentDollars = (Number(btn.dataset.accBal) / 100).toFixed(2);
-  const input = window.prompt(
-    `Update ${accName} balance\nEnter the current balance shown by your bank (e.g. ${currentDollars}):`,
-    currentDollars
-  );
-  if (input === null) return;
-  const parsed = Number(input);
-  if (Number.isNaN(parsed)) {
-    showToast('Please enter a valid number.', true);
-    return;
-  }
-  const actualBalanceMinor = Math.round(parsed * 100);
-  const res = await fetch('/api/accounts/reconcile', {
-    method: 'POST',
-    headers: { 'content-type': 'application/json', 'x-user-id': state.userId },
-    body: JSON.stringify({
-      accountId: btn.dataset.reconcileAcc,
-      actualBalanceMinor,
-      occurredOn: document.getElementById('txDateInput').value || '2026-11-26',
-    }),
-  });
-  if (res.ok) {
-    showToast(`Updated ${accName} balance to ${formatMoney(actualBalanceMinor)}.`);
-    await fetchDashboard();
-  }
-});
-
 document.getElementById('fullTxList').addEventListener('click', async (e) => {
   const btn = e.target.closest('[data-void-tx]');
   if (!btn) return;
@@ -482,6 +650,11 @@ document.getElementById('fullTxList').addEventListener('click', async (e) => {
     showToast('Transaction removed and balances updated.');
     await fetchDashboard();
   }
+});
+
+document.getElementById('activitySearchInput').addEventListener('input', (e) => {
+  state.searchQuery = e.target.value;
+  renderAll();
 });
 
 document.getElementById('historyFilterPills').addEventListener('click', (e) => {
@@ -498,7 +671,18 @@ document.getElementById('tenantSelect').addEventListener('change', async (e) => 
   state.selectedAccountId = null;
   state.selectedCategoryId = null;
   state.digitsMinor = 0;
-  closeSettings();
+  closeModal('settingsOverlay');
+  await fetchDashboard();
+});
+
+document.getElementById('currencySelect').addEventListener('change', async (e) => {
+  const homeCurrencyCode = e.target.value;
+  await fetch('/api/settings', {
+    method: 'POST',
+    headers: { 'content-type': 'application/json', 'x-user-id': state.userId },
+    body: JSON.stringify({ homeCurrencyCode }),
+  });
+  showToast(`Home currency updated to ${homeCurrencyCode}.`);
   await fetchDashboard();
 });
 
@@ -513,8 +697,11 @@ document.getElementById('cycleStartDaySelect').addEventListener('change', async 
   await fetchDashboard();
 });
 
-document.getElementById('txDateInput').addEventListener('change', () => {
-  fetchDashboard();
+document.getElementById('txDateInput').addEventListener('change', (e) => {
+  if (e.target.value) {
+    state.referenceDate = e.target.value;
+    fetchDashboard();
+  }
 });
 
 fetchDashboard();

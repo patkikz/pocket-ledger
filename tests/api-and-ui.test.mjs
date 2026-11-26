@@ -104,3 +104,68 @@ test('Criterion #3 & HTTP API: Smart defaults pre-select last used wallet & top 
   assert.match(csvRes.headers['content-type'], /text\/csv/);
   assert.match(csvRes.text, /Quick coffee/);
 });
+
+test('In-app management APIs: create category, update monthly cap, create recurring rule, and clean My Budget profile', async () => {
+  const { handler, demoUserId, personalUserId } = createAppHandler({ dbPath: ':memory:' });
+
+  // 1. Personal clean-slate profile exists and starts with 0 transactions
+  assert.ok(personalUserId, 'personalUserId is returned');
+  const personalDashRes = await invokeHandler(handler, {
+    method: 'GET',
+    url: '/api/dashboard?date=2026-11-26',
+    headers: { 'x-user-id': personalUserId },
+  });
+  assert.equal(personalDashRes.status, 200);
+  const personalDash = personalDashRes.json();
+  assert.equal(personalDash.recentTransactions.length, 0);
+
+  // 2. Create a new account in personal profile
+  const accRes = await invokeHandler(handler, {
+    method: 'POST',
+    url: '/api/accounts',
+    headers: { 'content-type': 'application/json', 'x-user-id': personalUserId },
+    body: { name: 'My Wallet', type: 'CASH_CHECKING', initialBalanceMinor: 50000, includeInSafeToSpend: true },
+  });
+  assert.equal(accRes.status, 201);
+  const accData = accRes.json();
+  assert.equal(accData.account.cachedBalanceMinor, 50000);
+
+  // 3. Create a new expense category
+  const catRes = await invokeHandler(handler, {
+    method: 'POST',
+    url: '/api/categories',
+    headers: { 'content-type': 'application/json', 'x-user-id': personalUserId },
+    body: { name: 'Subscriptions', kind: 'EXPENSE', monthlyCapMinor: 10000, color: '#8b5cf6' },
+  });
+  assert.equal(catRes.status, 201);
+  const catData = catRes.json();
+  assert.equal(catData.category.monthlyCapMinor, 10000);
+
+  // 4. Update monthly cap on the category
+  const capRes = await invokeHandler(handler, {
+    method: 'POST',
+    url: `/api/categories/${catData.category.id}/cap`,
+    headers: { 'content-type': 'application/json', 'x-user-id': personalUserId },
+    body: { monthlyCapMinor: 15000 },
+  });
+  assert.equal(capRes.status, 200);
+  assert.equal(capRes.json().category.monthlyCapMinor, 15000);
+
+  // 5. Create a recurring bill rule
+  const recRes = await invokeHandler(handler, {
+    method: 'POST',
+    url: '/api/recurring',
+    headers: { 'content-type': 'application/json', 'x-user-id': personalUserId },
+    body: {
+      title: 'Spotify Duo',
+      type: 'EXPENSE',
+      defaultAmountMinor: 1699,
+      accountId: accData.account.id,
+      categoryId: catData.category.id,
+      frequency: 'MONTHLY',
+      nextDueDate: '2026-11-29',
+    },
+  });
+  assert.equal(recRes.status, 201);
+  assert.equal(recRes.json().rule.title, 'Spotify Duo');
+});

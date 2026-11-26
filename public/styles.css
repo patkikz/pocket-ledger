@@ -122,9 +122,73 @@ button:active, .chip:active, .key-btn:active, .tab-btn:active, .nav-tab:active, 
   line-height: 1.2;
 }
 
+.cycle-nav {
+  display: flex;
+  align-items: center;
+  gap: 0.3rem;
+  margin-top: 0.1rem;
+}
+
+.cycle-arrow {
+  width: 24px;
+  height: 24px;
+  border-radius: 0.4rem;
+  background: transparent;
+  border: 1px solid transparent;
+  color: var(--text-secondary);
+  display: grid;
+  place-items: center;
+}
+
+@media (hover: hover) and (pointer: fine) {
+  .cycle-arrow:hover {
+    background: var(--bg-elevated);
+    color: var(--text-primary);
+  }
+}
+
 .cycle-label {
   font-size: 0.75rem;
   color: var(--text-secondary);
+  font-variant-numeric: tabular-nums;
+}
+
+.empty-callout {
+  background: rgba(99, 102, 241, 0.1);
+  border: 1px solid rgba(99, 102, 241, 0.35);
+  border-radius: 1rem;
+  padding: 1rem 1.15rem;
+  margin-bottom: 1.25rem;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  flex-wrap: wrap;
+}
+
+.empty-title {
+  font-size: 0.95rem;
+  font-weight: 700;
+}
+
+.empty-sub {
+  font-size: 0.8rem;
+  color: var(--text-secondary);
+  margin-top: 0.15rem;
+}
+
+.activity-toolbar {
+  display: flex;
+  flex-direction: column;
+  gap: 0.7rem;
+  margin-bottom: 0.9rem;
+}
+
+.budget-card-btn {
+  text-align: left;
+  width: 100%;
+  font: inherit;
+  color: inherit;
 }
 
 .topbar-actions {
