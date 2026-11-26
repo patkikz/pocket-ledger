@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { Readable } from 'node:stream';
+import vm from 'node:vm';
 import { createAppHandler } from '../src/server.mjs';
 
 function invokeHandler(handler, { method = 'GET', url = '/', headers = {}, body = null } = {}) {
@@ -240,7 +241,23 @@ test('PWA installability assets: manifest icons, SVG icon, service worker /api/ 
   assert.equal(manifest.scope, '/');
   assert.ok(Array.isArray(manifest.icons), 'manifest.icons should be an array');
   assert.ok(
-    manifest.icons.some((icon) => icon.src === '/icons/icon.svg'),
+    manifest.icons.some((icon) => icon.src === '/icons/icon-192.png' && icon.sizes === '192x192' && icon.type === 'image/png' && icon.purpose === 'any'),
+    'manifest.icons should include 192x192 any PNG'
+  );
+  assert.ok(
+    manifest.icons.some((icon) => icon.src === '/icons/icon-192.png' && icon.sizes === '192x192' && icon.type === 'image/png' && icon.purpose === 'maskable'),
+    'manifest.icons should include 192x192 maskable PNG'
+  );
+  assert.ok(
+    manifest.icons.some((icon) => icon.src === '/icons/icon-512.png' && icon.sizes === '512x512' && icon.type === 'image/png' && icon.purpose === 'any'),
+    'manifest.icons should include 512x512 any PNG'
+  );
+  assert.ok(
+    manifest.icons.some((icon) => icon.src === '/icons/icon-512.png' && icon.sizes === '512x512' && icon.type === 'image/png' && icon.purpose === 'maskable'),
+    'manifest.icons should include 512x512 maskable PNG'
+  );
+  assert.ok(
+    manifest.icons.some((icon) => icon.src === '/icons/icon.svg' && icon.sizes === 'any' && icon.type === 'image/svg+xml' && icon.purpose === 'any'),
     'manifest.icons should include /icons/icon.svg'
   );
 
@@ -248,6 +265,14 @@ test('PWA installability assets: manifest icons, SVG icon, service worker /api/ 
   assert.equal(iconRes.status, 200);
   assert.match(iconRes.headers['content-type'], /image\/svg\+xml/);
   assert.match(iconRes.text, /viewBox="0 0 512 512"/);
+
+  const icon192Res = await invokeHandler(handler, { method: 'GET', url: '/icons/icon-192.png' });
+  assert.equal(icon192Res.status, 200);
+  assert.match(icon192Res.headers['content-type'], /image\/png/);
+
+  const icon512Res = await invokeHandler(handler, { method: 'GET', url: '/icons/icon-512.png' });
+  assert.equal(icon512Res.status, 200);
+  assert.match(icon512Res.headers['content-type'], /image\/png/);
 
   const swRes = await invokeHandler(handler, { method: 'GET', url: '/sw.js' });
   assert.equal(swRes.status, 200);
@@ -258,11 +283,117 @@ test('PWA installability assets: manifest icons, SVG icon, service worker /api/ 
   assert.equal(htmlRes.status, 200);
   assert.match(htmlRes.text, /apple-mobile-web-app-capable/);
   assert.match(htmlRes.text, /apple-mobile-web-app-status-bar-style/);
-  assert.match(htmlRes.text, /apple-touch-icon/);
+  assert.match(htmlRes.text, /<link rel="apple-touch-icon" href="\/icons\/icon-192\.png"/);
   assert.match(htmlRes.text, /\/icons\/icon\.svg/);
 
   const jsRes = await invokeHandler(handler, { method: 'GET', url: '/app.js' });
   assert.equal(jsRes.status, 200);
   assert.match(jsRes.text, /serviceWorker/);
   assert.match(jsRes.text, /\/sw\.js/);
+});
+
+test('Service worker behavioral test: /api/* bypasses respondWith and caches.put, while static assets cache and fall back offline', async () => {
+  const { handler } = createAppHandler({ dbPath: ':memory:' });
+  const swRes = await invokeHandler(handler, { method: 'GET', url: '/sw.js' });
+  assert.equal(swRes.status, 200);
+
+  const listeners = new Map();
+  const putCalls = [];
+  const cacheStore = new Map();
+  let fetchMode = 'online';
+
+  const mockCache = {
+    async put(request, response) {
+      putCalls.push({ url: request.url, response });
+      cacheStore.set(request.url, response);
+    },
+    async addAll() {},
+  };
+
+  const sandbox = {
+    URL,
+    self: {
+      location: { origin: 'http://localhost:3000' },
+      addEventListener(type, fn) {
+        listeners.set(type, fn);
+      },
+      skipWaiting: async () => {},
+      clients: { claim: async () => {} },
+    },
+    caches: {
+      async open() {
+        return mockCache;
+      },
+      async match(request) {
+        return cacheStore.get(request.url);
+      },
+      async keys() {
+        return [];
+      },
+      async delete() {
+        return true;
+      },
+    },
+    async fetch(request) {
+      if (fetchMode === 'offline') {
+        throw new Error('Network offline');
+      }
+      const resObj = {
+        ok: true,
+        type: 'basic',
+        url: request.url,
+        body: `fresh:${request.url}`,
+        clone() {
+          return { ...resObj };
+        },
+      };
+      return resObj;
+    },
+  };
+
+  vm.runInNewContext(swRes.text, sandbox);
+  const fetchHandler = listeners.get('fetch');
+  assert.equal(typeof fetchHandler, 'function', 'sw.js should register a fetch listener');
+
+  function dispatchFetch(method, pathname) {
+    let respondWithPromise = null;
+    const waitUntilPromises = [];
+    const event = {
+      request: { method, url: `http://localhost:3000${pathname}` },
+      respondWith(promise) {
+        respondWithPromise = Promise.resolve(promise);
+      },
+      waitUntil(promise) {
+        waitUntilPromises.push(Promise.resolve(promise));
+      },
+    };
+    fetchHandler(event);
+    return { respondWithPromise, waitUntilPromises };
+  }
+
+  // 1. GET /api/dashboard must bypass respondWith and caches.put
+  const apiGet = dispatchFetch('GET', '/api/dashboard');
+  assert.equal(apiGet.respondWithPromise, null, 'GET /api/dashboard must not call event.respondWith');
+  assert.equal(putCalls.length, 0, 'GET /api/dashboard must not call caches.put');
+
+  // 2. POST /api/transactions must bypass respondWith and caches.put
+  const apiPost = dispatchFetch('POST', '/api/transactions');
+  assert.equal(apiPost.respondWithPromise, null, 'POST /api/transactions must not call event.respondWith');
+  assert.equal(putCalls.length, 0, 'POST /api/transactions must not call caches.put');
+
+  // 3. Static asset GET /styles.css online: calls respondWith and caches via event.waitUntil
+  const staticOnline = dispatchFetch('GET', '/styles.css');
+  assert.ok(staticOnline.respondWithPromise, 'GET /styles.css must call event.respondWith');
+  const onlineResponse = await staticOnline.respondWithPromise;
+  assert.equal(onlineResponse.body, 'fresh:http://localhost:3000/styles.css');
+  await Promise.all(staticOnline.waitUntilPromises);
+  assert.equal(putCalls.length, 1, 'GET /styles.css must call caches.put');
+  assert.equal(putCalls[0].url, 'http://localhost:3000/styles.css');
+
+  // 4. Static asset GET /styles.css offline: falls back to cached response
+  fetchMode = 'offline';
+  const staticOffline = dispatchFetch('GET', '/styles.css');
+  assert.ok(staticOffline.respondWithPromise, 'Offline GET /styles.css must call event.respondWith');
+  const offlineResponse = await staticOffline.respondWithPromise;
+  assert.equal(offlineResponse.body, 'fresh:http://localhost:3000/styles.css');
 });

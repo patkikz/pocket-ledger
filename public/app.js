@@ -133,12 +133,22 @@ async function apiFetch(url, opts = {}) {
   return res;
 }
 
+function handleActionError(err, fallbackMsg = 'Request failed') {
+  if (err?.isAuthError) return;
+  showToast(err?.message || fallbackMsg, true);
+}
+
+async function readErrorMessage(res, fallbackMsg) {
+  const data = await res.json().catch(() => ({}));
+  return data.error || fallbackMsg;
+}
+
 function shiftReferenceMonth(deltaMonths) {
   const [y, m, d] = state.referenceDate.split('-').map(Number);
   const dt = new Date(Date.UTC(y, m - 1 + deltaMonths, Math.min(d, 28)));
   state.referenceDate = dt.toISOString().slice(0, 10);
   document.getElementById('txDateInput').value = state.referenceDate;
-  fetchDashboard();
+  fetchDashboard().catch((err) => handleActionError(err, 'Could not load dashboard.'));
 }
 
 function updateKeypadReadout() {
@@ -561,27 +571,31 @@ document.getElementById('submitTxBtn').addEventListener('click', async () => {
     note: document.getElementById('txNoteInput').value.trim(),
   };
 
-  const res = await apiFetch('/api/transactions', {
-    method: 'POST',
-    headers: { 'content-type': 'application/json' },
-    body: JSON.stringify(payload),
-  });
-  const data = await res.json();
-  if (!res.ok) {
-    showToast(data.error || 'Could not save transaction.', true);
-    return;
+  try {
+    const res = await apiFetch('/api/transactions', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify(payload),
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) {
+      showToast(data.error || 'Could not save transaction.', true);
+      return;
+    }
+
+    state.digitsMinor = 0;
+    document.getElementById('txNoteInput').value = '';
+    closeModal('quickEntryOverlay');
+
+    const remText =
+      data.categoryRemainingCapMinor !== null && data.categoryRemainingCapMinor !== undefined
+        ? ` • ${formatMoney(data.categoryRemainingCapMinor)} left in category`
+        : '';
+    showToast(`Saved ${formatMoney(data.transaction.amountMinor)}${remText}`);
+    await fetchDashboard();
+  } catch (err) {
+    handleActionError(err, 'Could not save transaction.');
   }
-
-  state.digitsMinor = 0;
-  document.getElementById('txNoteInput').value = '';
-  closeModal('quickEntryOverlay');
-
-  const remText =
-    data.categoryRemainingCapMinor !== null && data.categoryRemainingCapMinor !== undefined
-      ? ` • ${formatMoney(data.categoryRemainingCapMinor)} left in category`
-      : '';
-  showToast(`Saved ${formatMoney(data.transaction.amountMinor)}${remText}`);
-  await fetchDashboard();
 });
 
 // Add Account Form
@@ -591,19 +605,22 @@ document.getElementById('addAccountForm').addEventListener('submit', async (e) =
   const type = document.getElementById('newAccType').value;
   const initialBalanceMinor = Math.round(Number(document.getElementById('newAccBalance').value || 0) * 100);
 
-  const res = await apiFetch('/api/accounts', {
-    method: 'POST',
-    headers: { 'content-type': 'application/json' },
-    body: JSON.stringify({ name, type, initialBalanceMinor }),
-  });
-  if (res.ok) {
-    document.getElementById('addAccountForm').reset();
-    closeModal('addAccountOverlay');
-    showToast(`Added account "${name}".`);
-    await fetchDashboard();
-  } else {
-    const err = await res.json();
-    showToast(err.error || 'Could not create account.', true);
+  try {
+    const res = await apiFetch('/api/accounts', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ name, type, initialBalanceMinor }),
+    });
+    if (res.ok) {
+      document.getElementById('addAccountForm').reset();
+      closeModal('addAccountOverlay');
+      showToast(`Added account "${name}".`);
+      await fetchDashboard();
+    } else {
+      showToast(await readErrorMessage(res, 'Could not create account.'), true);
+    }
+  } catch (err) {
+    handleActionError(err, 'Could not create account.');
   }
 });
 
@@ -624,15 +641,21 @@ document.getElementById('reconcileForm').addEventListener('submit', async (e) =>
   e.preventDefault();
   const accountId = document.getElementById('reconcileAccId').value;
   const actualBalanceMinor = Math.round(Number(document.getElementById('reconcileNewBalance').value) * 100);
-  const res = await apiFetch('/api/accounts/reconcile', {
-    method: 'POST',
-    headers: { 'content-type': 'application/json' },
-    body: JSON.stringify({ accountId, actualBalanceMinor, occurredOn: state.referenceDate }),
-  });
-  if (res.ok) {
+  try {
+    const res = await apiFetch('/api/accounts/reconcile', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ accountId, actualBalanceMinor, occurredOn: state.referenceDate }),
+    });
+    if (!res.ok) {
+      showToast(await readErrorMessage(res, 'Could not update balance.'), true);
+      return;
+    }
     closeModal('reconcileOverlay');
     showToast(`Balance updated to ${formatMoney(actualBalanceMinor)}.`);
     await fetchDashboard();
+  } catch (err) {
+    handleActionError(err, 'Could not update balance.');
   }
 });
 
@@ -658,32 +681,40 @@ document.getElementById('categoryForm').addEventListener('submit', async (e) => 
   const capVal = document.getElementById('newCatCap').value;
   const monthlyCapMinor = kind === 'INCOME' && !editId ? null : Math.round(Number(capVal) * 100);
 
-  if (editId) {
-    const res = await apiFetch(`/api/categories/${editId}/cap`, {
-      method: 'POST',
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ monthlyCapMinor }),
-    });
-    if (res.ok) {
+  try {
+    if (editId) {
+      const res = await apiFetch(`/api/categories/${editId}/cap`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ monthlyCapMinor }),
+      });
+      if (!res.ok) {
+        showToast(await readErrorMessage(res, 'Could not update budget limit.'), true);
+        return;
+      }
       closeModal('categoryModalOverlay');
       showToast('Monthly budget limit updated.');
       await fetchDashboard();
-    }
-  } else {
-    const name = document.getElementById('newCatName').value.trim();
-    const color = kind === 'INCOME' ? '#14b8a6' : '#6366f1';
-    const res = await apiFetch('/api/categories', {
-      method: 'POST',
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ name, kind, monthlyCapMinor, color }),
-    });
-    if (res.ok) {
+    } else {
+      const name = document.getElementById('newCatName').value.trim();
+      const color = kind === 'INCOME' ? '#14b8a6' : '#6366f1';
+      const res = await apiFetch('/api/categories', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ name, kind, monthlyCapMinor, color }),
+      });
+      if (!res.ok) {
+        showToast(await readErrorMessage(res, 'Could not create category.'), true);
+        return;
+      }
       const created = await res.json();
       state.selectedCategoryId = created.category.id;
       closeModal('categoryModalOverlay');
       showToast(`Added "${name}" category.`);
       await fetchDashboard();
     }
+  } catch (err) {
+    handleActionError(err, 'Could not save category.');
   }
 });
 
@@ -696,41 +727,59 @@ document.getElementById('recurringForm').addEventListener('submit', async (e) =>
   const categoryId = document.getElementById('newBillCategory').value;
   const nextDueDate = document.getElementById('newBillDate').value;
 
-  const res = await apiFetch('/api/recurring', {
-    method: 'POST',
-    headers: { 'content-type': 'application/json' },
-    body: JSON.stringify({ title, type: 'EXPENSE', defaultAmountMinor, accountId, categoryId, frequency: 'MONTHLY', nextDueDate }),
-  });
-  if (res.ok) {
+  try {
+    const res = await apiFetch('/api/recurring', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ title, type: 'EXPENSE', defaultAmountMinor, accountId, categoryId, frequency: 'MONTHLY', nextDueDate }),
+    });
+    if (!res.ok) {
+      showToast(await readErrorMessage(res, 'Could not add bill reminder.'), true);
+      return;
+    }
     document.getElementById('recurringForm').reset();
     closeModal('recurringModalOverlay');
     showToast(`Added "${title}" bill reminder.`);
     await fetchDashboard();
+  } catch (err) {
+    handleActionError(err, 'Could not add bill reminder.');
   }
 });
 
 document.getElementById('recurringList').addEventListener('click', async (e) => {
   const postBtn = e.target.closest('[data-post-rule]');
   if (postBtn) {
-    const res = await apiFetch(`/api/recurring/${postBtn.dataset.postRule}/post`, {
-      method: 'POST',
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({}),
-    });
-    if (res.ok) {
+    try {
+      const res = await apiFetch(`/api/recurring/${postBtn.dataset.postRule}/post`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({}),
+      });
+      if (!res.ok) {
+        showToast(await readErrorMessage(res, 'Could not post bill.'), true);
+        return;
+      }
       showToast('Bill marked as paid and added to your activity.');
       await fetchDashboard();
+    } catch (err) {
+      handleActionError(err, 'Could not post bill.');
     }
     return;
   }
   const skipBtn = e.target.closest('[data-skip-rule]');
   if (skipBtn) {
-    const res = await apiFetch(`/api/recurring/${skipBtn.dataset.skipRule}/skip`, {
-      method: 'POST',
-    });
-    if (res.ok) {
+    try {
+      const res = await apiFetch(`/api/recurring/${skipBtn.dataset.skipRule}/skip`, {
+        method: 'POST',
+      });
+      if (!res.ok) {
+        showToast(await readErrorMessage(res, 'Could not skip bill.'), true);
+        return;
+      }
       showToast('Bill skipped for this cycle.');
       await fetchDashboard();
+    } catch (err) {
+      handleActionError(err, 'Could not skip bill.');
     }
   }
 });
@@ -738,12 +787,18 @@ document.getElementById('recurringList').addEventListener('click', async (e) => 
 document.getElementById('fullTxList').addEventListener('click', async (e) => {
   const btn = e.target.closest('[data-void-tx]');
   if (!btn) return;
-  const res = await apiFetch(`/api/transactions/${btn.dataset.voidTx}/void`, {
-    method: 'POST',
-  });
-  if (res.ok) {
+  try {
+    const res = await apiFetch(`/api/transactions/${btn.dataset.voidTx}/void`, {
+      method: 'POST',
+    });
+    if (!res.ok) {
+      showToast(await readErrorMessage(res, 'Could not remove transaction.'), true);
+      return;
+    }
     showToast('Transaction removed and balances updated.');
     await fetchDashboard();
+  } catch (err) {
+    handleActionError(err, 'Could not remove transaction.');
   }
 });
 
@@ -763,30 +818,46 @@ document.getElementById('historyFilterPills').addEventListener('click', (e) => {
 
 document.getElementById('currencySelect').addEventListener('change', async (e) => {
   const homeCurrencyCode = e.target.value;
-  await apiFetch('/api/settings', {
-    method: 'POST',
-    headers: { 'content-type': 'application/json' },
-    body: JSON.stringify({ homeCurrencyCode }),
-  });
-  showToast(`Home currency updated to ${homeCurrencyCode}.`);
-  await fetchDashboard();
+  try {
+    const res = await apiFetch('/api/settings', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ homeCurrencyCode }),
+    });
+    if (!res.ok) {
+      showToast(await readErrorMessage(res, 'Could not update currency.'), true);
+      return;
+    }
+    showToast(`Home currency updated to ${homeCurrencyCode}.`);
+    await fetchDashboard();
+  } catch (err) {
+    handleActionError(err, 'Could not update currency.');
+  }
 });
 
 document.getElementById('cycleStartDaySelect').addEventListener('change', async (e) => {
   const budgetCycleStartDay = Number(e.target.value);
-  await apiFetch('/api/settings', {
-    method: 'POST',
-    headers: { 'content-type': 'application/json' },
-    body: JSON.stringify({ budgetCycleStartDay }),
-  });
-  showToast(`Monthly budget reset day updated to Day ${budgetCycleStartDay}.`);
-  await fetchDashboard();
+  try {
+    const res = await apiFetch('/api/settings', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ budgetCycleStartDay }),
+    });
+    if (!res.ok) {
+      showToast(await readErrorMessage(res, 'Could not update budget reset day.'), true);
+      return;
+    }
+    showToast(`Monthly budget reset day updated to Day ${budgetCycleStartDay}.`);
+    await fetchDashboard();
+  } catch (err) {
+    handleActionError(err, 'Could not update budget reset day.');
+  }
 });
 
 document.getElementById('txDateInput').addEventListener('change', (e) => {
   if (e.target.value) {
     state.referenceDate = e.target.value;
-    fetchDashboard();
+    fetchDashboard().catch((err) => handleActionError(err, 'Could not load dashboard.'));
   }
 });
 
@@ -836,8 +907,10 @@ document.getElementById('authForm').addEventListener('submit', async (e) => {
       return;
     }
     await completeAuthSuccess(data.user);
-  } catch {
-    showAuthError('Network error. Please try again.');
+  } catch (err) {
+    if (!err?.isAuthError) {
+      showAuthError('Network error. Please try again.');
+    }
   } finally {
     submitBtn.disabled = false;
   }
@@ -862,8 +935,10 @@ document.getElementById('demoLoginBtn').addEventListener('click', async () => {
       return;
     }
     await completeAuthSuccess(data.user);
-  } catch {
-    showAuthError('Network error. Please try again.');
+  } catch (err) {
+    if (!err?.isAuthError) {
+      showAuthError('Network error. Please try again.');
+    }
   } finally {
     demoBtn.disabled = false;
   }

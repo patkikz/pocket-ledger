@@ -6,6 +6,8 @@ const SHELL_ASSETS = [
   '/app.js',
   '/manifest.json',
   '/icons/icon.svg',
+  '/icons/icon-192.png',
+  '/icons/icon-512.png',
 ];
 
 self.addEventListener('install', (event) => {
@@ -49,7 +51,9 @@ self.addEventListener('fetch', (event) => {
       .then((response) => {
         if (response && response.ok && response.type === 'basic') {
           const clone = response.clone();
-          caches.open(CACHE_NAME).then((cache) => cache.put(request, clone));
+          event.waitUntil(
+            caches.open(CACHE_NAME).then((cache) => cache.put(request, clone)).catch(() => {})
+          );
         }
         return response;
       })
