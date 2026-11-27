@@ -1,11 +1,15 @@
 import { state, apiFetch, showToast, getUserInitials } from './state.js';
 
-const PIN_SESSION_KEY = 'pl_pin_unlocked';
-const BACKGROUND_LOCK_MS = 60_000;
-
 let enteredPin = '';
-let hiddenAtMs = null;
 let verifying = false;
+
+export function isStandalonePwa() {
+  if (typeof window === 'undefined') return false;
+  return Boolean(
+    window.matchMedia?.('(display-mode: standalone)')?.matches ||
+    window.navigator?.standalone === true
+  );
+}
 
 function renderDots() {
   const dotsEl = document.getElementById('pinDots');
@@ -35,16 +39,11 @@ function setPinError(msg = '') {
 
 export function clearPinSession() {
   enteredPin = '';
-  try {
-    sessionStorage.removeItem(PIN_SESSION_KEY);
-  } catch {
-    // ignore storage errors
-  }
   document.getElementById('pinLockOverlay')?.classList.add('hidden');
 }
 
 export function lockAppNow(user = state.user) {
-  if (!user?.hasPin) return;
+  if (!user?.hasPin || !isStandalonePwa()) return;
   enteredPin = '';
   setPinError('');
   renderDots();
@@ -63,16 +62,9 @@ export function lockAppNow(user = state.user) {
 }
 
 export function requirePinIfEnabled(user) {
-  if (!user?.hasPin) {
+  if (!user?.hasPin || !isStandalonePwa()) {
     clearPinSession();
     return;
-  }
-  try {
-    if (sessionStorage.getItem(PIN_SESSION_KEY) === user.id) {
-      return;
-    }
-  } catch {
-    // ignore storage errors
   }
   lockAppNow(user);
 }
@@ -95,13 +87,6 @@ async function submitPin() {
       setPinError('Incorrect PIN. Please try again.');
       showToast('Incorrect PIN. Please try again.', true);
       return;
-    }
-    try {
-      if (state.user?.id) {
-        sessionStorage.setItem(PIN_SESSION_KEY, state.user.id);
-      }
-    } catch {
-      // ignore storage errors
     }
     enteredPin = '';
     renderDots();
@@ -157,18 +142,14 @@ export function initPinLockHandlers() {
   });
 
   document.addEventListener('visibilitychange', () => {
-    if (document.visibilityState === 'hidden') {
-      hiddenAtMs = Date.now();
-    } else if (document.visibilityState === 'visible' && state.user?.hasPin && hiddenAtMs) {
-      if (Date.now() - hiddenAtMs >= BACKGROUND_LOCK_MS) {
-        try {
-          sessionStorage.removeItem(PIN_SESSION_KEY);
-        } catch {
-          // ignore
-        }
-        lockAppNow(state.user);
-      }
-      hiddenAtMs = null;
+    if (document.visibilityState === 'hidden' && state.user?.hasPin) {
+      lockAppNow(state.user);
+    }
+  });
+
+  window.addEventListener('pagehide', () => {
+    if (state.user?.hasPin) {
+      lockAppNow(state.user);
     }
   });
 }
