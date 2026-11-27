@@ -1511,6 +1511,16 @@ button:disabled {
   background: var(--bg-elevated);
 }
 
+.profile-dropdown-item.profile-row-danger,
+.btn-secondary.profile-row-danger {
+  color: var(--accent-rose);
+  font-weight: 500;
+}
+
+.profile-dropdown-item.profile-row-danger:hover {
+  background: rgba(244, 63, 94, 0.12);
+}
+
 .profile-dropdown .theme-radio-item {
   padding: 7px 14px;
   font-size: 0.86rem;
