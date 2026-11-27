@@ -151,6 +151,46 @@ button:active, .chip:active, .key-btn:active, .tab-btn:active, .nav-tab:active, 
   height: 1px;
 }
 
+/* Mobile Pull-to-Refresh Indicator */
+.ptr-indicator {
+  position: fixed;
+  top: calc(env(safe-area-inset-top, 0px) + 64px);
+  left: 50%;
+  z-index: 40;
+  transform: translate3d(-50%, -60px, 0);
+  opacity: 0;
+  pointer-events: none;
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.45rem 0.9rem;
+  border-radius: 999px;
+  background: var(--bg-elevated);
+  border: 1px solid var(--border-strong);
+  box-shadow: 0 10px 24px rgba(0, 0, 0, 0.45);
+  color: var(--text-primary);
+  font-size: 0.78rem;
+  font-weight: 600;
+}
+
+.ptr-spinner {
+  width: 18px;
+  height: 18px;
+  display: grid;
+  place-items: center;
+}
+
+.ptr-indicator.refreshing .ptr-spinner {
+  border-radius: 999px;
+  border: 2px solid rgba(255, 255, 255, 0.16);
+  border-top-color: var(--accent-primary);
+  animation: spinFast 0.65s linear infinite;
+}
+
+.ptr-indicator.refreshing .ptr-arrow {
+  display: none;
+}
+
 button:disabled {
   opacity: 0.6;
   cursor: not-allowed;

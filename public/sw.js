@@ -1,4 +1,4 @@
-const CACHE_NAME = 'pocketledger-shell-v3';
+const CACHE_NAME = 'pocketledger-shell-v4';
 const SHELL_ASSETS = [
   '/',
   '/index.html',
@@ -13,6 +13,7 @@ const SHELL_ASSETS = [
   '/js/activity.js',
   '/js/settings.js',
   '/js/realtime.js',
+  '/js/pull-to-refresh.js',
   '/manifest.json',
   '/icons/icon.svg',
   '/icons/icon-192.png',
