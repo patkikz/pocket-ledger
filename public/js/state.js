@@ -108,6 +108,10 @@ export function switchView(viewName, { push = true, accountTab = state.activeAcc
   document.querySelectorAll('.nav-tab').forEach((tab) => {
     tab.classList.toggle('active', tab.dataset.view === viewName);
   });
+  const mainNav = document.querySelector('.main-nav');
+  if (mainNav) {
+    mainNav.classList.toggle('hidden', viewName === 'profile');
+  }
   document.querySelectorAll('.view-section').forEach((sec) => {
     sec.classList.toggle('active', sec.id === `view-${viewName}`);
   });

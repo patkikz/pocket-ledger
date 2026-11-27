@@ -304,6 +304,9 @@ test('Frontend Profile dropdown, Account settings view markup, and service worke
   assert.match(html, /id="view-profile"/);
   assert.match(html, /id="openProfileBtn"/);
   assert.equal(html.includes('id="settingsOverlay"'), false);
+  for (const id of ['authPassword', 'currentPasswordInput', 'newPasswordInput', 'confirmPasswordInput']) {
+    assert.match(html, new RegExp(`data-toggle-password="${id}"`));
+  }
 
   const sw = fs.readFileSync(path.resolve('public/sw.js'), 'utf8');
   assert.match(sw, /'\/js\/profile\.js'/);

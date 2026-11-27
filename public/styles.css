@@ -1720,4 +1720,42 @@ button:disabled {
   .account-row-input {
     width: 100%;
   }
+  .account-panel-row .password-input-wrap {
+    width: 100%;
+  }
+}
+
+.password-input-wrap {
+  position: relative;
+  display: flex;
+  align-items: center;
+  width: 100%;
+}
+
+.account-panel-row .password-input-wrap {
+  width: 240px;
+  max-width: 100%;
+}
+
+.password-input-wrap .input-field {
+  width: 100%;
+  padding-right: 40px;
+}
+
+.password-toggle-btn {
+  position: absolute;
+  right: 6px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 30px;
+  height: 30px;
+  background: transparent;
+  border: none;
+  border-radius: 6px;
+  color: var(--text-muted);
+  transition: color 120ms var(--ease-out);
+}
+.password-toggle-btn:hover {
+  color: var(--text-primary);
 }

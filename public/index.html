@@ -51,7 +51,15 @@
 
         <div class="field-group">
           <label for="authPassword" class="field-label">Password</label>
-          <input type="password" id="authPassword" class="input-field" placeholder="At least 8 characters" minlength="8" autocomplete="current-password" required />
+          <div class="password-input-wrap">
+            <input type="password" id="authPassword" class="input-field" placeholder="At least 8 characters" minlength="8" autocomplete="current-password" required />
+            <button type="button" class="password-toggle-btn" data-toggle-password="authPassword" aria-label="Show password" aria-pressed="false">
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/>
+                <circle cx="12" cy="12" r="3"/>
+              </svg>
+            </button>
+          </div>
         </div>
 
         <div id="authRegisterExtras" class="auth-register-extras hidden">
@@ -485,15 +493,39 @@
                 <div id="changePasswordFields">
                   <div class="account-panel-row">
                     <label for="currentPasswordInput" class="account-row-label">Current password</label>
-                    <input type="password" id="currentPasswordInput" class="input-field account-row-input" autocomplete="current-password" required />
+                    <div class="password-input-wrap">
+                      <input type="password" id="currentPasswordInput" class="input-field account-row-input" autocomplete="current-password" required />
+                      <button type="button" class="password-toggle-btn" data-toggle-password="currentPasswordInput" aria-label="Show password" aria-pressed="false">
+                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                          <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/>
+                          <circle cx="12" cy="12" r="3"/>
+                        </svg>
+                      </button>
+                    </div>
                   </div>
                   <div class="account-panel-row">
                     <label for="newPasswordInput" class="account-row-label">New password</label>
-                    <input type="password" id="newPasswordInput" class="input-field account-row-input" minlength="8" autocomplete="new-password" placeholder="At least 8 characters" required />
+                    <div class="password-input-wrap">
+                      <input type="password" id="newPasswordInput" class="input-field account-row-input" minlength="8" autocomplete="new-password" placeholder="At least 8 characters" required />
+                      <button type="button" class="password-toggle-btn" data-toggle-password="newPasswordInput" aria-label="Show password" aria-pressed="false">
+                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                          <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/>
+                          <circle cx="12" cy="12" r="3"/>
+                        </svg>
+                      </button>
+                    </div>
                   </div>
                   <div class="account-panel-row">
                     <label for="confirmPasswordInput" class="account-row-label">Confirm password</label>
-                    <input type="password" id="confirmPasswordInput" class="input-field account-row-input" minlength="8" autocomplete="new-password" required />
+                    <div class="password-input-wrap">
+                      <input type="password" id="confirmPasswordInput" class="input-field account-row-input" minlength="8" autocomplete="new-password" required />
+                      <button type="button" class="password-toggle-btn" data-toggle-password="confirmPasswordInput" aria-label="Show password" aria-pressed="false">
+                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                          <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/>
+                          <circle cx="12" cy="12" r="3"/>
+                        </svg>
+                      </button>
+                    </div>
                   </div>
                   <div class="account-panel-footer">
                     <button type="submit" class="btn-primary btn-sm" id="savePasswordBtn">Update Password</button>
