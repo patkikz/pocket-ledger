@@ -41,6 +41,14 @@ export function showAuthView({ demoEnabled = state.demoEnabled } = {}) {
   state.historyFilter = 'ALL';
   state.txType = 'EXPENSE';
   state.referenceDate = '2026-11-26';
+  state.activity = {
+    items: [],
+    totalCount: 0,
+    hasMore: false,
+    nextOffset: 0,
+    isLoading: false,
+    loadedOnce: false,
+  };
 
   document.getElementById('toastBanner').classList.add('hidden');
   document.getElementById('txNoteInput').value = '';

@@ -185,6 +185,15 @@ export function createAppHandler({
           });
         }
 
+        if (req.method === 'GET' && url.pathname === '/api/transactions') {
+          const limit = Number(url.searchParams.get('limit') || 30);
+          const offset = Number(url.searchParams.get('offset') || 0);
+          const type = url.searchParams.get('type') || 'ALL';
+          const search = url.searchParams.get('q') || '';
+          const result = ledger.listTransactions(userId, { limit, offset, type, search });
+          return replyJson(200, result);
+        }
+
         if (req.method === 'POST' && url.pathname === '/api/transactions') {
           const body = await readJsonBody(req);
           const tx = ledger.recordTransaction(userId, {

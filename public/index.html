@@ -14,6 +14,12 @@
   <link rel="stylesheet" href="/styles.css" />
 </head>
 <body>
+  <!-- INITIAL BOOT LOADING SCREEN -->
+  <div id="bootLoader" class="boot-loader" role="status" aria-live="polite">
+    <div class="boot-spinner" aria-hidden="true"></div>
+    <p class="boot-text">Loading PocketLedger…</p>
+  </div>
+
   <!-- AUTH GATE VIEW (hidden until /api/auth/me resolves) -->
   <section id="authView" class="auth-shell hidden" aria-labelledby="authHeading">
     <div class="auth-card">
@@ -280,6 +286,10 @@
       </div>
 
       <div class="tx-card-list" id="fullTxList"></div>
+      <div id="activityLoadMoreWrap" class="load-more-wrap hidden">
+        <button type="button" class="btn-secondary" id="loadMoreTxBtn">Load more</button>
+      </div>
+      <div id="activityScrollSentinel" class="scroll-sentinel" aria-hidden="true"></div>
     </section>
   </main>
 

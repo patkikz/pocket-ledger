@@ -1,10 +1,10 @@
-import { state, openModal, closeModal, closeAllModals, switchView } from './js/state.js';
+import { state, openModal, closeModal, closeAllModals, switchView, setViewChangeHandler } from './js/state.js';
 import { initAuthHandlers, setAuthMode, showAuthError, showAuthView, showAppShell } from './js/auth.js';
 import { fetchDashboard, shiftReferenceMonth } from './js/dashboard.js';
 import { initQuickEntryHandlers } from './js/quick-entry.js';
 import { initAccountHandlers } from './js/accounts.js';
 import { initBudgetAndRecurringHandlers, openAddCategoryModal } from './js/budgets.js';
-import { initActivityHandlers } from './js/activity.js';
+import { initActivityHandlers, ensureActivityLoaded } from './js/activity.js';
 import { initSettingsHandlers } from './js/settings.js';
 
 // Global Navigation & Modal Chrome
@@ -31,12 +31,22 @@ document.addEventListener('keydown', (e) => {
 });
 
 // Initialize Feature Modules
+setViewChangeHandler((viewName) => {
+  if (viewName === 'history') ensureActivityLoaded();
+});
 initAuthHandlers({ onAuthenticated: fetchDashboard });
 initQuickEntryHandlers({ openAddCategoryModal });
 initAccountHandlers();
 initBudgetAndRecurringHandlers();
 initActivityHandlers();
 initSettingsHandlers();
+
+function hideBootLoader() {
+  const loader = document.getElementById('bootLoader');
+  if (!loader || loader.classList.contains('hidden')) return;
+  loader.classList.add('fade-out');
+  setTimeout(() => loader.classList.add('hidden'), 180);
+}
 
 async function boot() {
   setAuthMode('login');
@@ -59,6 +69,8 @@ async function boot() {
       showAuthView({ demoEnabled: state.demoEnabled });
       showAuthError('Unable to connect to PocketLedger. Please try again.');
     }
+  } finally {
+    hideBootLoader();
   }
 }
 

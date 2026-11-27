@@ -1302,6 +1302,86 @@ export function createLedgerDb(dbPath = ':memory:') {
     };
   }
 
+  function listTransactions(userId, { limit = 30, offset = 0, type = 'ALL', search = '' } = {}) {
+    const safeLimit = Math.max(1, Math.min(100, Number(limit) || 30));
+    const safeOffset = Math.max(0, Number(offset) || 0);
+    const whereClauses = ['t.user_id = ?'];
+    const params = [userId];
+
+    if (type === 'EXPENSE') {
+      whereClauses.push(`t.type IN ('EXPENSE', 'REFUND')`);
+    } else if (type === 'INCOME' || type === 'TRANSFER') {
+      whereClauses.push(`t.type = ?`);
+      params.push(type);
+    }
+
+    const trimmedSearch = String(search || '').trim();
+    if (trimmedSearch) {
+      const pattern = `%${trimmedSearch.toLowerCase()}%`;
+      whereClauses.push(`(
+        LOWER(COALESCE(t.note, '')) LIKE ?
+        OR LOWER(COALESCE(c.name, '')) LIKE ?
+        OR LOWER(COALESCE(a.name, '')) LIKE ?
+        OR LOWER(COALESCE(da.name, '')) LIKE ?
+      )`);
+      params.push(pattern, pattern, pattern, pattern);
+    }
+
+    const whereSql = whereClauses.join(' AND ');
+
+    const countRow = db.prepare(`
+      SELECT COUNT(*) AS total
+      FROM transactions t
+      JOIN accounts a ON a.id = t.account_id
+      LEFT JOIN accounts da ON da.id = t.transfer_destination_account_id
+      LEFT JOIN categories c ON c.id = t.category_id
+      WHERE ${whereSql}
+    `).get(...params);
+
+    const totalCount = Number(countRow?.total ?? 0);
+
+    const rows = db.prepare(`
+      SELECT t.*,
+             a.name AS account_name,
+             da.name AS transfer_destination_account_name,
+             c.name AS category_name,
+             c.icon AS category_icon,
+             c.color AS category_color
+      FROM transactions t
+      JOIN accounts a ON a.id = t.account_id
+      LEFT JOIN accounts da ON da.id = t.transfer_destination_account_id
+      LEFT JOIN categories c ON c.id = t.category_id
+      WHERE ${whereSql}
+      ORDER BY t.occurred_on DESC, t.created_at DESC
+      LIMIT ? OFFSET ?
+    `).all(...params, safeLimit, safeOffset);
+
+    const items = rows.map((row) => ({
+      id: row.id,
+      type: row.type,
+      amountMinor: Number(row.amount_minor),
+      accountId: row.account_id,
+      accountName: row.account_name,
+      transferDestinationAccountId: row.transfer_destination_account_id,
+      transferDestinationAccountName: row.transfer_destination_account_name,
+      categoryId: row.category_id,
+      categoryName: row.category_name,
+      categoryIcon: row.category_icon,
+      categoryColor: row.category_color,
+      occurredOn: row.occurred_on,
+      note: row.note,
+      voidedAt: row.voided_at,
+    }));
+
+    const nextOffset = safeOffset + items.length;
+    return {
+      items,
+      totalCount,
+      hasMore: nextOffset < totalCount,
+      nextOffset,
+    };
+  }
+
   function escapeCsvField(val) {
     if (val === null || val === undefined) return '';
     const str = String(val);
@@ -1383,6 +1463,7 @@ export function createLedgerDb(dbPath = ':memory:') {
     skipRecurringRuleCycle,
     updateRecurringRule,
     getCycleDashboard,
+    listTransactions,
     exportLedgerCsv,
   };
 }

@@ -1,5 +1,11 @@
 import { state, formatMoney, showToast, apiFetch, handleActionError } from './state.js';
 
+let onActivityInvalidate = null;
+
+export function setActivityInvalidateHandler(fn) {
+  onActivityInvalidate = fn;
+}
+
 export function syncCategorySelection() {
   if (!state.dashboard) return;
   const neededKind = state.txType === 'INCOME' ? 'INCOME' : 'EXPENSE';
@@ -162,19 +168,6 @@ export function renderAll() {
   const activeRecent = d.recentTransactions.filter((t) => !t.voidedAt).slice(0, 5);
   renderTxItems(activeRecent, document.getElementById('recentTxList'), { showUndo: false });
 
-  const q = state.searchQuery.trim().toLowerCase();
-  const filtered = d.recentTransactions.filter((t) => {
-    if (state.historyFilter === 'EXPENSE' && t.type !== 'EXPENSE' && t.type !== 'REFUND') return false;
-    if (state.historyFilter !== 'ALL' && state.historyFilter !== 'EXPENSE' && t.type !== state.historyFilter) return false;
-    if (!q) return true;
-    const hay = `${t.note || ''} ${t.categoryName || ''} ${t.accountName || ''} ${t.transferDestinationAccountName || ''}`.toLowerCase();
-    return hay.includes(q);
-  });
-  renderTxItems(filtered, document.getElementById('fullTxList'), {
-    showUndo: true,
-    emptyMsg: q ? 'No matching transactions found.' : 'No transactions yet.',
-  });
-
   document.getElementById('netLiquidityLabel').textContent = `Total Net Liquidity: ${formatMoney(d.netLiquidityMinor)}`;
   const accountsGrid = document.getElementById('accountsGrid');
   if (d.accounts.length === 0) {
@@ -269,6 +262,10 @@ export async function fetchDashboard() {
 
   syncCategorySelection();
   renderAll();
+  state.activity.loadedOnce = false;
+  if (state.activeView === 'history' && onActivityInvalidate) {
+    onActivityInvalidate();
+  }
 }
 
 export function shiftReferenceMonth(deltaMonths) {

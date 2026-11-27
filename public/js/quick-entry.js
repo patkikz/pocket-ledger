@@ -4,6 +4,7 @@ import {
   showToast,
   closeModal,
   apiFetch,
+  withButtonLoading,
   handleActionError,
   readErrorMessage,
 } from './state.js';
@@ -118,30 +119,33 @@ export function initQuickEntryHandlers({ openAddCategoryModal }) {
       note: document.getElementById('txNoteInput').value.trim(),
     };
 
-    try {
-      const res = await apiFetch('/api/transactions', {
-        method: 'POST',
-        headers: { 'content-type': 'application/json' },
-        body: JSON.stringify(payload),
-      });
-      if (!res.ok) {
-        showToast(await readErrorMessage(res, 'Could not save transaction.'), true);
-        return;
+    const submitBtn = document.getElementById('submitTxBtn');
+    await withButtonLoading(submitBtn, 'Saving…', async () => {
+      try {
+        const res = await apiFetch('/api/transactions', {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify(payload),
+        });
+        if (!res.ok) {
+          showToast(await readErrorMessage(res, 'Could not save transaction.'), true);
+          return;
+        }
+        const data = await res.json();
+
+        state.digitsMinor = 0;
+        document.getElementById('txNoteInput').value = '';
+        closeModal('quickEntryOverlay');
+
+        const remText =
+          data.categoryRemainingCapMinor !== null && data.categoryRemainingCapMinor !== undefined
+            ? ` • ${formatMoney(data.categoryRemainingCapMinor)} left in category`
+            : '';
+        showToast(`Saved ${formatMoney(data.transaction.amountMinor)}${remText}`);
+        await fetchDashboard();
+      } catch (err) {
+        handleActionError(err, 'Could not save transaction.');
       }
-      const data = await res.json();
-
-      state.digitsMinor = 0;
-      document.getElementById('txNoteInput').value = '';
-      closeModal('quickEntryOverlay');
-
-      const remText =
-        data.categoryRemainingCapMinor !== null && data.categoryRemainingCapMinor !== undefined
-          ? ` • ${formatMoney(data.categoryRemainingCapMinor)} left in category`
-          : '';
-      showToast(`Saved ${formatMoney(data.transaction.amountMinor)}${remText}`);
-      await fetchDashboard();
-    } catch (err) {
-      handleActionError(err, 'Could not save transaction.');
-    }
+    });
   });
 }

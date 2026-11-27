@@ -13,6 +13,14 @@ export const state = {
   selectedDestinationAccountId: null,
   selectedCategoryId: null,
   dashboard: null,
+  activity: {
+    items: [],
+    totalCount: 0,
+    hasMore: false,
+    nextOffset: 0,
+    isLoading: false,
+    loadedOnce: false,
+  },
 };
 
 const CURRENCY_SYMBOLS = {
@@ -23,9 +31,30 @@ const CURRENCY_SYMBOLS = {
 };
 
 let onAuthRequired = null;
+let onViewChange = null;
 
 export function setAuthRequiredHandler(fn) {
   onAuthRequired = fn;
+}
+
+export function setViewChangeHandler(fn) {
+  onViewChange = fn;
+}
+
+export async function withButtonLoading(btn, loadingText, fn) {
+  if (!btn || btn.disabled) return;
+  const span = btn.querySelector('span');
+  const originalText = span ? span.textContent : btn.textContent;
+  btn.disabled = true;
+  if (span) span.textContent = loadingText;
+  else btn.textContent = loadingText;
+  try {
+    return await fn();
+  } finally {
+    btn.disabled = false;
+    if (span) span.textContent = originalText;
+    else btn.textContent = originalText;
+  }
 }
 
 export function formatMoney(amountMinor, currencyCode = state.currencyCode) {
@@ -56,6 +85,7 @@ export function switchView(viewName) {
   document.querySelectorAll('.view-section').forEach((sec) => {
     sec.classList.toggle('active', sec.id === `view-${viewName}`);
   });
+  if (onViewChange) onViewChange(viewName);
 }
 
 export function openModal(id) {
