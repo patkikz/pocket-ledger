@@ -7,6 +7,8 @@ export function isStandalonePwa() {
   if (typeof window === 'undefined') return false;
   return Boolean(
     window.matchMedia?.('(display-mode: standalone)')?.matches ||
+    window.matchMedia?.('(display-mode: minimal-ui)')?.matches ||
+    window.matchMedia?.('(display-mode: fullscreen)')?.matches ||
     window.navigator?.standalone === true
   );
 }
@@ -149,6 +151,12 @@ export function initPinLockHandlers() {
 
   window.addEventListener('pagehide', () => {
     if (state.user?.hasPin) {
+      lockAppNow(state.user);
+    }
+  });
+
+  window.addEventListener('pageshow', (e) => {
+    if (e.persisted && state.user?.hasPin) {
       lockAppNow(state.user);
     }
   });
