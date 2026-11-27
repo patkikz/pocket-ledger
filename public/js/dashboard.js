@@ -240,7 +240,9 @@ export function renderAll() {
 }
 
 export async function fetchDashboard() {
-  const res = await apiFetch(`/api/dashboard?date=${encodeURIComponent(state.referenceDate)}`);
+  const res = await apiFetch(`/api/dashboard?date=${encodeURIComponent(state.referenceDate)}`, {
+    cache: 'no-store',
+  });
   const data = await res.json().catch(() => ({}));
   if (!res.ok) {
     showToast(data.error || 'Could not load dashboard.', true);

@@ -205,12 +205,17 @@ export function createAppHandler({
         const replyJson = (statusCode, payload) => sendJson(res, statusCode, payload, authHeaders);
 
         if (req.method === 'GET' && url.pathname === '/api/events') {
+          req.setTimeout?.(0);
+          res.setTimeout?.(0);
+          req.socket?.setKeepAlive?.(true);
+          req.socket?.setNoDelay?.(true);
           res.writeHead(200, {
             'content-type': 'text/event-stream; charset=utf-8',
             'cache-control': 'no-cache, no-transform',
             connection: 'keep-alive',
             ...authHeaders,
           });
+          res.flushHeaders?.();
           res.write(': connected\n\n');
           if (!sseClients.has(userId)) {
             sseClients.set(userId, new Set());
@@ -470,7 +475,13 @@ export function createAppHandler({
       }
 
       const ext = path.extname(filePath);
-      res.writeHead(200, { 'content-type': MIME_TYPES[ext] || 'application/octet-stream' });
+      const cacheControl = ext === '.html' || ext === '.js' || ext === '.css'
+        ? 'no-cache, must-revalidate'
+        : 'public, max-age=3600';
+      res.writeHead(200, {
+        'content-type': MIME_TYPES[ext] || 'application/octet-stream',
+        'cache-control': cacheControl,
+      });
       res.end(fs.readFileSync(filePath));
     } catch (err) {
       sendJson(res, 400, { error: err.message || 'Bad request' });
