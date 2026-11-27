@@ -98,7 +98,7 @@ function sendJson(res, statusCode, payload, extraHeaders = {}) {
 }
 
 export function createAppHandler({
-  dbPath = path.join(__dirname, '..', 'pocket-ledger.sqlite'),
+  dbPath = process.env.DB_PATH || path.join(__dirname, '..', 'pocket-ledger.sqlite'),
   disableDemo = process.env.DISABLE_DEMO === '1',
 } = {}) {
   const ledger = createLedgerDb(dbPath);
@@ -139,6 +139,15 @@ export function createAppHandler({
       const url = new URL(req.url, 'http://localhost');
       const cookies = parseCookies(req);
       const rawToken = cookies[SESSION_COOKIE_NAME] || null;
+
+      if (req.method === 'GET' && url.pathname === '/api/health') {
+        try {
+          ledger.db.prepare('SELECT 1 AS ok').get();
+          return sendJson(res, 200, { ok: true, status: 'healthy' });
+        } catch (err) {
+          return sendJson(res, 503, { ok: false, status: 'unhealthy', error: err.message });
+        }
+      }
 
       if (req.method === 'POST' && url.pathname === '/api/auth/register') {
         const body = await readJsonBody(req);

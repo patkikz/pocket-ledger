@@ -53,6 +53,7 @@ function hideBootLoader() {
 }
 
 async function boot() {
+  document.getElementById('txDateInput').value = state.referenceDate;
   setAuthMode('login');
   try {
     const res = await fetch('/api/auth/me');

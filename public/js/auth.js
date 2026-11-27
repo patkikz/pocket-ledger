@@ -1,4 +1,4 @@
-import { state, closeAllModals, switchView, setAuthRequiredHandler } from './state.js';
+import { state, getTodayIsoDate, closeAllModals, switchView, setAuthRequiredHandler } from './state.js';
 import { startRealtimeSync, stopRealtimeSync } from './realtime.js';
 
 export function showAuthError(msg) {
@@ -42,7 +42,7 @@ export function showAuthView({ demoEnabled = state.demoEnabled } = {}) {
   state.searchQuery = '';
   state.historyFilter = 'ALL';
   state.txType = 'EXPENSE';
-  state.referenceDate = '2026-11-26';
+  state.referenceDate = getTodayIsoDate();
   state.activity = {
     items: [],
     totalCount: 0,

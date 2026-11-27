@@ -1,9 +1,17 @@
+export function getTodayIsoDate() {
+  const now = new Date();
+  const y = now.getFullYear();
+  const m = String(now.getMonth() + 1).padStart(2, '0');
+  const d = String(now.getDate()).padStart(2, '0');
+  return `${y}-${m}-${d}`;
+}
+
 export const state = {
   user: null,
   demoEnabled: false,
   authMode: 'login',
   currencyCode: 'USD',
-  referenceDate: '2026-11-26',
+  referenceDate: getTodayIsoDate(),
   activeView: 'home',
   historyFilter: 'ALL',
   searchQuery: '',
