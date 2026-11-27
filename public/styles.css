@@ -1661,8 +1661,22 @@ button:disabled {
 .account-row-input {
   width: 240px;
   max-width: 100%;
-  padding: 7px 10px;
-  font-size: 0.88rem;
+  min-height: 36px;
+  padding: 6px 12px;
+  font-size: 0.85rem;
+  border-radius: 8px;
+  background-color: var(--bg-root);
+  border: 1px solid var(--border-strong);
+}
+
+select.account-row-input {
+  appearance: none;
+  -webkit-appearance: none;
+  padding-right: 32px;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='14' height='14' viewBox='0 0 24 24' fill='none' stroke='%2394a3b8' stroke-width='2.2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpolyline points='6 9 12 15 18 9'/%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+  background-position: right 10px center;
+  cursor: pointer;
 }
 
 .account-row-readonly {
@@ -1686,8 +1700,25 @@ button:disabled {
 }
 
 .account-theme-tabs {
+  grid-template-columns: repeat(3, 1fr);
+  width: 240px;
+  max-width: 100%;
   margin-bottom: 0;
-  min-width: 210px;
+  padding: 3px;
+  border: 1px solid var(--border-subtle);
+  gap: 2px;
+}
+
+.account-theme-tabs .tab-btn {
+  min-height: 32px;
+  font-size: 0.82rem;
+  font-weight: 500;
+  padding: 0 10px;
+}
+
+.account-theme-tabs .tab-btn.active {
+  font-weight: 600;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.14);
 }
 
 .account-demo-notice {
