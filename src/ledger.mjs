@@ -505,6 +505,24 @@ export function createLedgerDb(dbPath = ':memory:') {
     }));
   }
 
+  function updateAccount(userId, accountId, { name, includeInSafeToSpend, isArchived } = {}) {
+    const acc = getAccount(userId, accountId);
+    const nextName = name !== undefined ? String(name).trim() : acc.name;
+    if (!nextName) {
+      throw new TypeError('Account name cannot be empty');
+    }
+    const nextSafe = includeInSafeToSpend !== undefined ? Boolean(includeInSafeToSpend) : acc.includeInSafeToSpend;
+    const nextArchived = isArchived !== undefined ? Boolean(isArchived) : acc.isArchived;
+
+    db.prepare(`
+      UPDATE accounts
+      SET name = ?, include_in_safe_to_spend = ?, is_archived = ?
+      WHERE id = ? AND user_id = ?
+    `).run(nextName, nextSafe ? 1 : 0, nextArchived ? 1 : 0, accountId, userId);
+
+    return getAccount(userId, accountId);
+  }
+
   function createCategory(userId, {
     id = crypto.randomUUID(),
     name,
@@ -551,6 +569,25 @@ export function createLedgerDb(dbPath = ':memory:') {
     db.prepare(`
       UPDATE categories SET monthly_cap_minor = ? WHERE id = ? AND user_id = ?
     `).run(monthlyCapMinor, categoryId, userId);
+    return getCategory(userId, categoryId);
+  }
+
+  function updateCategory(userId, categoryId, { name, monthlyCapMinor } = {}) {
+    const cat = getCategory(userId, categoryId);
+    const nextName = name !== undefined ? String(name).trim() : cat.name;
+    if (!nextName) {
+      throw new TypeError('Category name cannot be empty');
+    }
+    let nextCap = cat.monthlyCapMinor;
+    if (monthlyCapMinor !== undefined) {
+      if (monthlyCapMinor !== null) {
+        assertPositiveIntegerMinor(monthlyCapMinor, 'monthlyCapMinor');
+      }
+      nextCap = cat.kind === 'INCOME' ? null : monthlyCapMinor;
+    }
+    db.prepare(`
+      UPDATE categories SET name = ?, monthly_cap_minor = ? WHERE id = ? AND user_id = ?
+    `).run(nextName, nextCap, categoryId, userId);
     return getCategory(userId, categoryId);
   }
 
@@ -735,6 +772,78 @@ export function createLedgerDb(dbPath = ':memory:') {
 
       recalculateAccountBalance(userId, tx.accountId);
       if (tx.transferDestinationAccountId) {
+        recalculateAccountBalance(userId, tx.transferDestinationAccountId);
+      }
+
+      return getTransaction(userId, transactionId);
+    });
+  }
+
+  function updateTransaction(userId, transactionId, { amountMinor, categoryId, occurredOn, note } = {}) {
+    return runInTransaction(() => {
+      const tx = getTransaction(userId, transactionId);
+      if (tx.voidedAt) {
+        throw new Error('Cannot edit a voided transaction');
+      }
+      if (tx.type === 'ADJUSTMENT') {
+        throw new Error('Cannot edit a balance adjustment transaction');
+      }
+
+      const nextAmount = amountMinor !== undefined ? amountMinor : tx.amountMinor;
+      assertPositiveIntegerMinor(nextAmount, 'amountMinor');
+
+      let nextCategoryId = tx.categoryId;
+      if (categoryId !== undefined) {
+        if (tx.type === 'TRANSFER') {
+          if (categoryId !== null) {
+            throw new Error('TRANSFER must not carry a categoryId');
+          }
+          nextCategoryId = null;
+        } else {
+          if (!categoryId) {
+            throw new Error(`${tx.type} requires a categoryId`);
+          }
+          const cat = requireOwnedCategory(userId, categoryId);
+          const expectedKind = tx.type === 'INCOME' ? 'INCOME' : 'EXPENSE';
+          if (cat.kind !== expectedKind) {
+            throw new Error(`${tx.type} must use a ${expectedKind} category (got ${cat.kind})`);
+          }
+          nextCategoryId = categoryId;
+        }
+      }
+
+      const nextOccurredOn = occurredOn !== undefined ? String(occurredOn) : tx.occurredOn;
+      const nextNote = note !== undefined ? String(note) : tx.note;
+      const now = new Date().toISOString();
+
+      db.prepare(`
+        UPDATE transactions
+        SET amount_minor = ?, category_id = ?, occurred_on = ?, note = ?, updated_at = ?
+        WHERE id = ? AND user_id = ?
+      `).run(nextAmount, nextCategoryId, nextOccurredOn, nextNote, now, transactionId, userId);
+
+      if (tx.type === 'EXPENSE') {
+        db.prepare(`
+          UPDATE ledger_entries SET signed_amount_minor = ?, occurred_on = ?
+          WHERE transaction_id = ? AND user_id = ? AND account_id = ? AND voided_at IS NULL
+        `).run(-nextAmount, nextOccurredOn, transactionId, userId, tx.accountId);
+        recalculateAccountBalance(userId, tx.accountId);
+      } else if (tx.type === 'REFUND' || tx.type === 'INCOME') {
+        db.prepare(`
+          UPDATE ledger_entries SET signed_amount_minor = ?, occurred_on = ?
+          WHERE transaction_id = ? AND user_id = ? AND account_id = ? AND voided_at IS NULL
+        `).run(nextAmount, nextOccurredOn, transactionId, userId, tx.accountId);
+        recalculateAccountBalance(userId, tx.accountId);
+      } else if (tx.type === 'TRANSFER') {
+        db.prepare(`
+          UPDATE ledger_entries SET signed_amount_minor = ?, occurred_on = ?
+          WHERE transaction_id = ? AND user_id = ? AND account_id = ? AND voided_at IS NULL
+        `).run(-nextAmount, nextOccurredOn, transactionId, userId, tx.accountId);
+        db.prepare(`
+          UPDATE ledger_entries SET signed_amount_minor = ?, occurred_on = ?
+          WHERE transaction_id = ? AND user_id = ? AND account_id = ? AND voided_at IS NULL
+        `).run(nextAmount, nextOccurredOn, transactionId, userId, tx.transferDestinationAccountId);
+        recalculateAccountBalance(userId, tx.accountId);
         recalculateAccountBalance(userId, tx.transferDestinationAccountId);
       }
 
@@ -937,6 +1046,42 @@ export function createLedgerDb(dbPath = ':memory:') {
     return getRecurringRule(userId, rule.id);
   }
 
+  function updateRecurringRule(userId, ruleId, {
+    title,
+    defaultAmountMinor,
+    accountId,
+    categoryId,
+    nextDueDate,
+    isActive,
+  } = {}) {
+    const rule = getRecurringRule(userId, ruleId);
+    const nextTitle = title !== undefined ? String(title).trim() : rule.title;
+    if (!nextTitle) {
+      throw new TypeError('Recurring rule title cannot be empty');
+    }
+    const nextAmount = defaultAmountMinor !== undefined ? defaultAmountMinor : rule.defaultAmountMinor;
+    assertPositiveIntegerMinor(nextAmount, 'defaultAmountMinor');
+
+    const nextAccountId = accountId !== undefined ? accountId : rule.accountId;
+    requireOwnedAccount(userId, nextAccountId, 'Account');
+
+    const nextCategoryId = categoryId !== undefined ? categoryId : rule.categoryId;
+    if (nextCategoryId) {
+      requireOwnedCategory(userId, nextCategoryId);
+    }
+
+    const nextDue = nextDueDate !== undefined ? String(nextDueDate) : rule.nextDueDate;
+    const nextActive = isActive !== undefined ? Boolean(isActive) : rule.isActive;
+
+    db.prepare(`
+      UPDATE recurring_rules
+      SET title = ?, default_amount_minor = ?, account_id = ?, category_id = ?, next_due_date = ?, is_active = ?
+      WHERE id = ? AND user_id = ?
+    `).run(nextTitle, nextAmount, nextAccountId, nextCategoryId, nextDue, nextActive ? 1 : 0, ruleId, userId);
+
+    return getRecurringRule(userId, ruleId);
+  }
+
   function getCycleDashboard(userId, referenceDateStr = new Date().toISOString().slice(0, 10)) {
     const user = getUser(userId);
     if (!user) throw new Error('User not found');
@@ -988,6 +1133,42 @@ export function createLedgerDb(dbPath = ':memory:') {
       }
     }
 
+    // Previous cycle window & aggregates for cycle-over-cycle spending insights
+    const [csY, csM, csD] = cycleStart.split('-').map(Number);
+    const prevRefDt = new Date(Date.UTC(csY, csM - 1, csD - 1));
+    const { cycleStart: prevCycleStart, cycleEnd: prevCycleEnd } = getBudgetCycleWindow(
+      prevRefDt.toISOString().slice(0, 10),
+      user.budgetCycleStartDay
+    );
+
+    const prevPeriodRows = db.prepare(`
+      SELECT type, category_id, COALESCE(SUM(amount_minor), 0) AS sum_minor
+      FROM transactions
+      WHERE user_id = ?
+        AND voided_at IS NULL
+        AND occurred_on >= ?
+        AND occurred_on <= ?
+        AND type IN ('INCOME', 'EXPENSE', 'REFUND')
+      GROUP BY type, category_id
+    `).all(userId, prevCycleStart, prevCycleEnd);
+
+    let previousTotalIncomeMinor = 0;
+    let previousTotalSpentMinor = 0;
+    const prevCategorySpendMap = new Map();
+
+    for (const r of prevPeriodRows) {
+      const amt = Number(r.sum_minor);
+      if (r.type === 'INCOME') {
+        previousTotalIncomeMinor += amt;
+      } else if (r.type === 'EXPENSE') {
+        previousTotalSpentMinor += amt;
+        prevCategorySpendMap.set(r.category_id, (prevCategorySpendMap.get(r.category_id) || 0) + amt);
+      } else if (r.type === 'REFUND') {
+        previousTotalSpentMinor -= amt;
+        prevCategorySpendMap.set(r.category_id, (prevCategorySpendMap.get(r.category_id) || 0) - amt);
+      }
+    }
+
     const rawCategories = db.prepare(`
       SELECT * FROM categories
       WHERE user_id = ?
@@ -998,6 +1179,7 @@ export function createLedgerDb(dbPath = ':memory:') {
     const categories = rawCategories.map((c) => {
       const monthlyCapMinor = c.monthly_cap_minor !== null ? Number(c.monthly_cap_minor) : null;
       const netSpentMinor = c.kind === 'EXPENSE' ? (categorySpendMap.get(c.id) || 0) : 0;
+      const previousNetSpentMinor = c.kind === 'EXPENSE' ? (prevCategorySpendMap.get(c.id) || 0) : 0;
       if (c.kind === 'EXPENSE' && monthlyCapMinor !== null) {
         totalMonthlyCapMinor += monthlyCapMinor;
       }
@@ -1010,6 +1192,8 @@ export function createLedgerDb(dbPath = ':memory:') {
         usageCount: Number(c.usage_count),
         monthlyCapMinor,
         netSpentMinor,
+        previousNetSpentMinor,
+        deltaMinor: netSpentMinor - previousNetSpentMinor,
         remainingCapMinor: monthlyCapMinor !== null ? monthlyCapMinor - netSpentMinor : null,
         percentUsed: monthlyCapMinor && monthlyCapMinor > 0
           ? Math.round((netSpentMinor / monthlyCapMinor) * 100)
@@ -1094,8 +1278,13 @@ export function createLedgerDb(dbPath = ':memory:') {
       user,
       cycleStart,
       cycleEnd,
+      prevCycleStart,
+      prevCycleEnd,
       totalIncomeMinor,
       totalSpentMinor,
+      previousTotalIncomeMinor,
+      previousTotalSpentMinor,
+      spentDeltaMinor: totalSpentMinor - previousTotalSpentMinor,
       totalMonthlyCapMinor,
       safeLiquidAssetsMinor,
       unpaidRecurringMinor,
@@ -1176,11 +1365,14 @@ export function createLedgerDb(dbPath = ':memory:') {
     createAccount,
     getAccount,
     listAccounts,
+    updateAccount,
     createCategory,
     getCategory,
     updateCategoryCap,
+    updateCategory,
     recordTransaction,
     getTransaction,
+    updateTransaction,
     voidTransaction,
     reconcileAccountBalance,
     verifyAccountIntegrity,
@@ -1189,6 +1381,7 @@ export function createLedgerDb(dbPath = ':memory:') {
     getRecurringRule,
     postRecurringRule,
     skipRecurringRuleCycle,
+    updateRecurringRule,
     getCycleDashboard,
     exportLedgerCsv,
   };

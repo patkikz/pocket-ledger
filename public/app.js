@@ -102,7 +102,20 @@ function showAuthView({ demoEnabled = state.demoEnabled } = {}) {
   state.selectedCategoryId = null;
   state.digitsMinor = 0;
   state.searchQuery = '';
+  state.historyFilter = 'ALL';
+  state.txType = 'EXPENSE';
+  state.referenceDate = '2026-11-26';
+
+  document.getElementById('toastBanner').classList.add('hidden');
+  document.getElementById('txNoteInput').value = '';
+  document.getElementById('txDateInput').value = state.referenceDate;
   document.getElementById('activitySearchInput').value = '';
+  document.querySelectorAll('.filter-pill').forEach((p) => {
+    p.classList.toggle('active', p.dataset.filter === 'ALL');
+  });
+  document.querySelectorAll('#quickEntryOverlay .mode-tabs .tab-btn').forEach((b) => {
+    b.classList.toggle('active', b.dataset.txType === 'EXPENSE');
+  });
   switchView('home');
 
   document.querySelector('.topbar').classList.add('hidden');
@@ -226,6 +239,11 @@ function renderTxItems(transactions, containerEl, { showUndo = false, emptyMsg =
         <div class="tx-right">
           <span class="tx-amount ${isPositive ? 'positive' : ''}">${sign}${formatMoney(t.amountMinor)}</span>
           ${
+            showUndo && !isVoid && t.type !== 'ADJUSTMENT'
+              ? `<button type="button" class="btn-undo-sm" data-edit-tx="${t.id}">Edit</button>`
+              : ''
+          }
+          ${
             showUndo && !isVoid
               ? `<button type="button" class="btn-undo-sm" data-void-tx="${t.id}">Undo</button>`
               : ''
@@ -257,6 +275,23 @@ function renderAll() {
       ? `Includes ${formatMoney(d.unpaidRecurringMinor)} reserved for upcoming bills`
       : 'All due bills for this cycle are paid';
   document.getElementById('kpiTotalSpent').textContent = formatMoney(d.totalSpentMinor);
+  const spentTrendEl = document.getElementById('kpiSpentTrend');
+  if (d.previousTotalSpentMinor > 0) {
+    const delta = d.spentDeltaMinor;
+    if (delta < 0) {
+      spentTrendEl.textContent = `↓ ${formatMoney(Math.abs(delta))} vs last cycle`;
+      spentTrendEl.className = 'stat-trend down';
+    } else if (delta > 0) {
+      spentTrendEl.textContent = `↑ ${formatMoney(delta)} vs last cycle`;
+      spentTrendEl.className = 'stat-trend up';
+    } else {
+      spentTrendEl.textContent = 'Same as last cycle';
+      spentTrendEl.className = 'stat-trend';
+    }
+  } else {
+    spentTrendEl.textContent = '';
+    spentTrendEl.className = 'stat-trend';
+  }
   document.getElementById('kpiTotalIncome').textContent = formatMoney(d.totalIncomeMinor);
   document.getElementById('kpiCardDebt').textContent = formatMoney(d.creditCardDebtMinor);
 
@@ -275,6 +310,7 @@ function renderAll() {
           </div>
           <div style="display:flex;gap:0.45rem;">
             <button type="button" class="btn-mark-paid" data-post-rule="${r.id}">Mark Paid</button>
+            <button type="button" class="btn-secondary" data-edit-rule="${r.id}">Edit</button>
             <button type="button" class="btn-secondary" data-skip-rule="${r.id}">Skip</button>
           </div>
         </div>`
@@ -282,7 +318,7 @@ function renderAll() {
       .join('');
   }
 
-  // Monthly Budgets (Click any card to edit its monthly limit)
+  // Monthly Budgets (Click any card to edit its name or monthly limit)
   document.getElementById('categoryCapsGrid').innerHTML = d.categories
     .filter((c) => c.kind === 'EXPENSE')
     .map((c) => {
@@ -294,6 +330,14 @@ function renderAll() {
         c.remainingCapMinor >= 0
           ? `${formatMoney(c.remainingCapMinor)} left`
           : `${formatMoney(Math.abs(c.remainingCapMinor))} over`;
+      let trendHtml = '';
+      if (c.previousNetSpentMinor > 0) {
+        if (c.deltaMinor < 0) {
+          trendHtml = `<div class="budget-trend down">↓ ${formatMoney(Math.abs(c.deltaMinor))} vs last cycle</div>`;
+        } else if (c.deltaMinor > 0) {
+          trendHtml = `<div class="budget-trend up">↑ ${formatMoney(c.deltaMinor)} vs last cycle</div>`;
+        }
+      }
       return `<button type="button" class="budget-card budget-card-btn" data-edit-cat="${c.id}" data-cat-name="${c.name}" data-cat-cap="${cap}">
         <div class="budget-top">
           <span class="budget-name">${c.name}</span>
@@ -302,7 +346,8 @@ function renderAll() {
         <div class="progress-track">
           <div class="progress-fill" style="background:${barColor};transform:scaleX(${ratio});"></div>
         </div>
-        <div class="budget-meta">${formatMoney(c.netSpentMinor)} spent of ${formatMoney(cap)} · Tap to edit limit</div>
+        <div class="budget-meta">${formatMoney(c.netSpentMinor)} spent of ${formatMoney(cap)} · Tap to edit</div>
+        ${trendHtml}
       </button>`;
     })
     .join('');
@@ -341,9 +386,14 @@ function renderAll() {
             <span class="account-type">${typeLabel}</span>
           </div>
           <div class="account-balance ${a.cachedBalanceMinor < 0 ? 'negative' : ''}">${formatMoney(a.cachedBalanceMinor)}</div>
-          <button type="button" class="btn-secondary" style="justify-content:center;" data-reconcile-acc="${a.id}" data-acc-name="${a.name}" data-acc-bal="${a.cachedBalanceMinor}">
-            Update Balance
-          </button>
+          <div class="account-actions">
+            <button type="button" class="btn-secondary" style="justify-content:center;" data-reconcile-acc="${a.id}" data-acc-name="${a.name}" data-acc-bal="${a.cachedBalanceMinor}">
+              Update Balance
+            </button>
+            <button type="button" class="btn-secondary" data-edit-acc="${a.id}">
+              Edit
+            </button>
+          </div>
         </div>`;
       })
       .join('');
@@ -429,12 +479,8 @@ function syncCategoryModalFields() {
 document.getElementById('openAddCategoryBtn').addEventListener('click', () => openAddCategoryModal('EXPENSE'));
 document.getElementById('newCatKind').addEventListener('change', syncCategoryModalFields);
 
-document.getElementById('openAddRecurringBtn').addEventListener('click', () => {
+function populateRecurringSelects() {
   const d = state.dashboard;
-  if (!d || d.accounts.length === 0) {
-    showToast('Please add an account first.', true);
-    return;
-  }
   document.getElementById('newBillAccount').innerHTML = d.accounts
     .map((a) => `<option value="${a.id}">${a.name}</option>`)
     .join('');
@@ -442,7 +488,21 @@ document.getElementById('openAddRecurringBtn').addEventListener('click', () => {
     .filter((c) => c.kind === 'EXPENSE')
     .map((c) => `<option value="${c.id}">${c.name}</option>`)
     .join('');
+}
+
+document.getElementById('openAddRecurringBtn').addEventListener('click', () => {
+  const d = state.dashboard;
+  if (!d || d.accounts.length === 0) {
+    showToast('Please add an account first.', true);
+    return;
+  }
+  document.getElementById('recurringModalTitle').textContent = 'Add Recurring Bill';
+  document.getElementById('editRuleId').value = '';
+  document.getElementById('recurringForm').reset();
+  populateRecurringSelects();
   document.getElementById('newBillDate').value = state.referenceDate;
+  document.getElementById('saveRuleBtn').textContent = 'Save Bill Reminder';
+  document.getElementById('deleteRuleBtn').classList.add('hidden');
   openModal('recurringModalOverlay');
 });
 
@@ -624,8 +684,20 @@ document.getElementById('addAccountForm').addEventListener('submit', async (e) =
   }
 });
 
-// Open Update Balance Modal
+// Open Update Balance or Edit Account Modal
 document.getElementById('accountsGrid').addEventListener('click', (e) => {
+  const editBtn = e.target.closest('[data-edit-acc]');
+  if (editBtn) {
+    const acc = state.dashboard?.accounts.find((a) => a.id === editBtn.dataset.editAcc);
+    if (!acc) return;
+    document.getElementById('editAccountId').value = acc.id;
+    document.getElementById('editAccName').value = acc.name;
+    document.getElementById('editAccSafeToSpend').checked = acc.includeInSafeToSpend;
+    document.getElementById('editAccSafeGroup').style.display = acc.type === 'CREDIT_CARD' ? 'none' : 'flex';
+    openModal('editAccountOverlay');
+    return;
+  }
+
   const btn = e.target.closest('[data-reconcile-acc]');
   if (!btn) return;
   const accName = btn.dataset.accName;
@@ -635,6 +707,51 @@ document.getElementById('accountsGrid').addEventListener('click', (e) => {
   document.getElementById('reconcileHelper').textContent = `Current balance: ${formatMoney(Number(btn.dataset.accBal))}. Enter the balance shown by your bank.`;
   document.getElementById('reconcileNewBalance').value = currentDollars;
   openModal('reconcileOverlay');
+});
+
+document.getElementById('editAccountForm').addEventListener('submit', async (e) => {
+  e.preventDefault();
+  const id = document.getElementById('editAccountId').value;
+  const name = document.getElementById('editAccName').value.trim();
+  const includeInSafeToSpend = document.getElementById('editAccSafeToSpend').checked;
+  try {
+    const res = await apiFetch(`/api/accounts/${id}`, {
+      method: 'PATCH',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ name, includeInSafeToSpend }),
+    });
+    if (!res.ok) {
+      showToast(await readErrorMessage(res, 'Could not update account.'), true);
+      return;
+    }
+    closeModal('editAccountOverlay');
+    showToast(`Updated "${name}".`);
+    await fetchDashboard();
+  } catch (err) {
+    handleActionError(err, 'Could not update account.');
+  }
+});
+
+document.getElementById('archiveAccountBtn').addEventListener('click', async () => {
+  const id = document.getElementById('editAccountId').value;
+  if (!window.confirm('Archive this account? Historical transactions will be preserved.')) return;
+  try {
+    const res = await apiFetch(`/api/accounts/${id}`, {
+      method: 'PATCH',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ isArchived: true }),
+    });
+    if (!res.ok) {
+      showToast(await readErrorMessage(res, 'Could not archive account.'), true);
+      return;
+    }
+    state.selectedAccountId = null;
+    closeModal('editAccountOverlay');
+    showToast('Account archived.');
+    await fetchDashboard();
+  } catch (err) {
+    handleActionError(err, 'Could not archive account.');
+  }
 });
 
 document.getElementById('reconcileForm').addEventListener('submit', async (e) => {
@@ -659,15 +776,16 @@ document.getElementById('reconcileForm').addEventListener('submit', async (e) =>
   }
 });
 
-// Edit Monthly Budget Cap or Add Category
+// Edit Monthly Budget Cap & Name or Add Category
 document.getElementById('categoryCapsGrid').addEventListener('click', (e) => {
   const card = e.target.closest('[data-edit-cat]');
   if (!card) return;
   document.getElementById('categoryModalTitle').textContent = `Edit ${card.dataset.catName} Budget`;
   document.getElementById('editCategoryId').value = card.dataset.editCat;
   document.getElementById('newCatKindGroup').style.display = 'none';
-  document.getElementById('newCatNameGroup').style.display = 'none';
-  document.getElementById('newCatName').required = false;
+  document.getElementById('newCatNameGroup').style.display = 'flex';
+  document.getElementById('newCatName').required = true;
+  document.getElementById('newCatName').value = card.dataset.catName;
   document.getElementById('newCatCapGroup').style.display = 'flex';
   document.getElementById('newCatCap').required = true;
   document.getElementById('newCatCap').value = (Number(card.dataset.catCap) / 100).toFixed(2);
@@ -678,25 +796,25 @@ document.getElementById('categoryForm').addEventListener('submit', async (e) => 
   e.preventDefault();
   const editId = document.getElementById('editCategoryId').value;
   const kind = document.getElementById('newCatKind').value;
+  const name = document.getElementById('newCatName').value.trim();
   const capVal = document.getElementById('newCatCap').value;
   const monthlyCapMinor = kind === 'INCOME' && !editId ? null : Math.round(Number(capVal) * 100);
 
   try {
     if (editId) {
-      const res = await apiFetch(`/api/categories/${editId}/cap`, {
-        method: 'POST',
+      const res = await apiFetch(`/api/categories/${editId}`, {
+        method: 'PATCH',
         headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ monthlyCapMinor }),
+        body: JSON.stringify({ name, monthlyCapMinor }),
       });
       if (!res.ok) {
-        showToast(await readErrorMessage(res, 'Could not update budget limit.'), true);
+        showToast(await readErrorMessage(res, 'Could not update category.'), true);
         return;
       }
       closeModal('categoryModalOverlay');
-      showToast('Monthly budget limit updated.');
+      showToast('Category updated.');
       await fetchDashboard();
     } else {
-      const name = document.getElementById('newCatName').value.trim();
       const color = kind === 'INCOME' ? '#14b8a6' : '#6366f1';
       const res = await apiFetch('/api/categories', {
         method: 'POST',
@@ -718,9 +836,10 @@ document.getElementById('categoryForm').addEventListener('submit', async (e) => 
   }
 });
 
-// Add Recurring Bill
+// Add / Edit Recurring Bill
 document.getElementById('recurringForm').addEventListener('submit', async (e) => {
   e.preventDefault();
+  const editRuleId = document.getElementById('editRuleId').value;
   const title = document.getElementById('newBillTitle').value.trim();
   const defaultAmountMinor = Math.round(Number(document.getElementById('newBillAmount').value) * 100);
   const accountId = document.getElementById('newBillAccount').value;
@@ -728,25 +847,68 @@ document.getElementById('recurringForm').addEventListener('submit', async (e) =>
   const nextDueDate = document.getElementById('newBillDate').value;
 
   try {
-    const res = await apiFetch('/api/recurring', {
-      method: 'POST',
+    const res = await apiFetch(editRuleId ? `/api/recurring/${editRuleId}` : '/api/recurring', {
+      method: editRuleId ? 'PATCH' : 'POST',
       headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ title, type: 'EXPENSE', defaultAmountMinor, accountId, categoryId, frequency: 'MONTHLY', nextDueDate }),
+      body: JSON.stringify(
+        editRuleId
+          ? { title, defaultAmountMinor, accountId, categoryId, nextDueDate }
+          : { title, type: 'EXPENSE', defaultAmountMinor, accountId, categoryId, frequency: 'MONTHLY', nextDueDate }
+      ),
     });
     if (!res.ok) {
-      showToast(await readErrorMessage(res, 'Could not add bill reminder.'), true);
+      showToast(await readErrorMessage(res, 'Could not save bill reminder.'), true);
       return;
     }
     document.getElementById('recurringForm').reset();
     closeModal('recurringModalOverlay');
-    showToast(`Added "${title}" bill reminder.`);
+    showToast(editRuleId ? `Updated "${title}".` : `Added "${title}" bill reminder.`);
     await fetchDashboard();
   } catch (err) {
-    handleActionError(err, 'Could not add bill reminder.');
+    handleActionError(err, 'Could not save bill reminder.');
+  }
+});
+
+document.getElementById('deleteRuleBtn').addEventListener('click', async () => {
+  const editRuleId = document.getElementById('editRuleId').value;
+  if (!editRuleId) return;
+  try {
+    const res = await apiFetch(`/api/recurring/${editRuleId}`, {
+      method: 'PATCH',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ isActive: false }),
+    });
+    if (!res.ok) {
+      showToast(await readErrorMessage(res, 'Could not remove bill.'), true);
+      return;
+    }
+    closeModal('recurringModalOverlay');
+    showToast('Recurring bill removed.');
+    await fetchDashboard();
+  } catch (err) {
+    handleActionError(err, 'Could not remove bill.');
   }
 });
 
 document.getElementById('recurringList').addEventListener('click', async (e) => {
+  const editBtn = e.target.closest('[data-edit-rule]');
+  if (editBtn) {
+    const rule = state.dashboard?.dueRecurringRules.find((r) => r.id === editBtn.dataset.editRule);
+    if (!rule) return;
+    document.getElementById('recurringModalTitle').textContent = 'Edit Recurring Bill';
+    document.getElementById('editRuleId').value = rule.id;
+    populateRecurringSelects();
+    document.getElementById('newBillTitle').value = rule.title;
+    document.getElementById('newBillAmount').value = (rule.defaultAmountMinor / 100).toFixed(2);
+    document.getElementById('newBillAccount').value = rule.accountId;
+    if (rule.categoryId) document.getElementById('newBillCategory').value = rule.categoryId;
+    document.getElementById('newBillDate').value = rule.nextDueDate;
+    document.getElementById('saveRuleBtn').textContent = 'Save Changes';
+    document.getElementById('deleteRuleBtn').classList.remove('hidden');
+    openModal('recurringModalOverlay');
+    return;
+  }
+
   const postBtn = e.target.closest('[data-post-rule]');
   if (postBtn) {
     try {
@@ -785,6 +947,30 @@ document.getElementById('recurringList').addEventListener('click', async (e) => 
 });
 
 document.getElementById('fullTxList').addEventListener('click', async (e) => {
+  const editBtn = e.target.closest('[data-edit-tx]');
+  if (editBtn) {
+    const tx = state.dashboard?.recentTransactions.find((t) => t.id === editBtn.dataset.editTx);
+    if (!tx) return;
+    document.getElementById('editTxId').value = tx.id;
+    document.getElementById('editTxAmount').value = (tx.amountMinor / 100).toFixed(2);
+    document.getElementById('editTxDate').value = tx.occurredOn;
+    document.getElementById('editTxNote').value = tx.note || '';
+
+    const catGroup = document.getElementById('editTxCategoryGroup');
+    if (tx.type === 'TRANSFER') {
+      catGroup.style.display = 'none';
+    } else {
+      catGroup.style.display = 'flex';
+      const neededKind = tx.type === 'INCOME' ? 'INCOME' : 'EXPENSE';
+      document.getElementById('editTxCategory').innerHTML = (state.dashboard?.categories || [])
+        .filter((c) => c.kind === neededKind)
+        .map((c) => `<option value="${c.id}" ${c.id === tx.categoryId ? 'selected' : ''}>${c.name}</option>`)
+        .join('');
+    }
+    openModal('editTxOverlay');
+    return;
+  }
+
   const btn = e.target.closest('[data-void-tx]');
   if (!btn) return;
   try {
@@ -795,6 +981,50 @@ document.getElementById('fullTxList').addEventListener('click', async (e) => {
       showToast(await readErrorMessage(res, 'Could not remove transaction.'), true);
       return;
     }
+    showToast('Transaction removed and balances updated.');
+    await fetchDashboard();
+  } catch (err) {
+    handleActionError(err, 'Could not remove transaction.');
+  }
+});
+
+document.getElementById('editTxForm').addEventListener('submit', async (e) => {
+  e.preventDefault();
+  const txId = document.getElementById('editTxId').value;
+  const tx = state.dashboard?.recentTransactions.find((t) => t.id === txId);
+  const amountMinor = Math.round(Number(document.getElementById('editTxAmount').value) * 100);
+  const occurredOn = document.getElementById('editTxDate').value;
+  const note = document.getElementById('editTxNote').value.trim();
+  const categoryId = tx?.type === 'TRANSFER' ? null : document.getElementById('editTxCategory').value;
+
+  try {
+    const res = await apiFetch(`/api/transactions/${txId}`, {
+      method: 'PATCH',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ amountMinor, categoryId, occurredOn, note }),
+    });
+    if (!res.ok) {
+      showToast(await readErrorMessage(res, 'Could not update transaction.'), true);
+      return;
+    }
+    closeModal('editTxOverlay');
+    showToast('Transaction updated.');
+    await fetchDashboard();
+  } catch (err) {
+    handleActionError(err, 'Could not update transaction.');
+  }
+});
+
+document.getElementById('voidTxFromModalBtn').addEventListener('click', async () => {
+  const txId = document.getElementById('editTxId').value;
+  if (!txId) return;
+  try {
+    const res = await apiFetch(`/api/transactions/${txId}/void`, { method: 'POST' });
+    if (!res.ok) {
+      showToast(await readErrorMessage(res, 'Could not remove transaction.'), true);
+      return;
+    }
+    closeModal('editTxOverlay');
     showToast('Transaction removed and balances updated.');
     await fetchDashboard();
   } catch (err) {

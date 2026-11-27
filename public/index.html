@@ -191,6 +191,7 @@
           <div class="stat-item">
             <span class="stat-label">Spent this cycle</span>
             <span class="stat-value" id="kpiTotalSpent">$0.00</span>
+            <span class="stat-trend" id="kpiSpentTrend"></span>
           </div>
           <div class="stat-divider" aria-hidden="true"></div>
           <div class="stat-item">
@@ -467,6 +468,7 @@
         </button>
       </div>
       <form id="recurringForm" class="settings-form">
+        <input type="hidden" id="editRuleId" />
         <div class="field-group">
           <label for="newBillTitle" class="field-label">Bill Name</label>
           <input type="text" id="newBillTitle" class="input-field" placeholder="e.g. Rent, Netflix, Internet" required />
@@ -487,7 +489,72 @@
           <label for="newBillDate" class="field-label">Next Due Date</label>
           <input type="date" id="newBillDate" class="input-field" value="2026-11-28" required />
         </div>
-        <button type="submit" class="submit-btn">Save Bill Reminder</button>
+        <button type="submit" class="submit-btn" id="saveRuleBtn">Save Bill Reminder</button>
+        <button type="button" class="btn-danger hidden" id="deleteRuleBtn">Remove Bill</button>
+      </form>
+    </div>
+  </div>
+
+  <!-- EDIT TRANSACTION MODAL -->
+  <div id="editTxOverlay" class="modal-overlay hidden" role="dialog" aria-modal="true" aria-labelledby="editTxTitle">
+    <div class="modal-sheet modal-sheet-sm">
+      <div class="modal-header">
+        <h2 id="editTxTitle" class="modal-title">Edit Transaction</h2>
+        <button type="button" class="icon-btn" data-close-modal="editTxOverlay" aria-label="Close">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <line x1="18" y1="6" x2="6" y2="18"/>
+            <line x1="6" y1="6" x2="18" y2="18"/>
+          </svg>
+        </button>
+      </div>
+      <form id="editTxForm" class="settings-form">
+        <input type="hidden" id="editTxId" />
+        <div class="field-group">
+          <label for="editTxAmount" class="field-label">Amount</label>
+          <input type="number" step="0.01" min="0.01" id="editTxAmount" class="input-field" inputmode="decimal" required />
+        </div>
+        <div class="field-group" id="editTxCategoryGroup">
+          <label for="editTxCategory" class="field-label">Category</label>
+          <select id="editTxCategory" class="input-field"></select>
+        </div>
+        <div class="field-group">
+          <label for="editTxDate" class="field-label">Date</label>
+          <input type="date" id="editTxDate" class="input-field" required />
+        </div>
+        <div class="field-group">
+          <label for="editTxNote" class="field-label">Note</label>
+          <input type="text" id="editTxNote" class="input-field" placeholder="Optional note" />
+        </div>
+        <button type="submit" class="submit-btn">Save Changes</button>
+        <button type="button" class="btn-danger" id="voidTxFromModalBtn">Remove Transaction</button>
+      </form>
+    </div>
+  </div>
+
+  <!-- EDIT / ARCHIVE ACCOUNT MODAL -->
+  <div id="editAccountOverlay" class="modal-overlay hidden" role="dialog" aria-modal="true" aria-labelledby="editAccountTitle">
+    <div class="modal-sheet modal-sheet-sm">
+      <div class="modal-header">
+        <h2 id="editAccountTitle" class="modal-title">Edit Account</h2>
+        <button type="button" class="icon-btn" data-close-modal="editAccountOverlay" aria-label="Close">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <line x1="18" y1="6" x2="6" y2="18"/>
+            <line x1="6" y1="6" x2="18" y2="18"/>
+          </svg>
+        </button>
+      </div>
+      <form id="editAccountForm" class="settings-form">
+        <input type="hidden" id="editAccountId" />
+        <div class="field-group">
+          <label for="editAccName" class="field-label">Account Name</label>
+          <input type="text" id="editAccName" class="input-field" required />
+        </div>
+        <label class="checkbox-row" id="editAccSafeGroup">
+          <input type="checkbox" id="editAccSafeToSpend" />
+          <span>Include in Safe to Spend</span>
+        </label>
+        <button type="submit" class="submit-btn">Save Account</button>
+        <button type="button" class="btn-danger" id="archiveAccountBtn">Archive Account</button>
       </form>
     </div>
   </div>

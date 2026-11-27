@@ -184,6 +184,57 @@ button:active, .chip:active, .key-btn:active, .tab-btn:active, .nav-tab:active, 
   margin-bottom: 0.9rem;
 }
 
+.stat-trend {
+  font-size: 0.72rem;
+  font-weight: 600;
+  color: var(--text-secondary);
+}
+
+.stat-trend.down { color: #34d399; }
+.stat-trend.up { color: #fbbf24; }
+
+.budget-trend {
+  font-size: 0.72rem;
+  font-weight: 600;
+  margin-top: 0.2rem;
+  color: var(--text-secondary);
+}
+
+.budget-trend.down { color: #34d399; }
+.budget-trend.up { color: #fbbf24; }
+
+.account-actions {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 0.45rem;
+}
+
+.checkbox-row {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  font-size: 0.88rem;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.checkbox-row input[type="checkbox"] {
+  width: 18px;
+  height: 18px;
+  accent-color: var(--accent-primary);
+}
+
+.btn-danger {
+  width: 100%;
+  min-height: 44px;
+  border-radius: 0.75rem;
+  border: 1px solid rgba(244, 63, 94, 0.4);
+  background: rgba(244, 63, 94, 0.12);
+  color: #fda4af;
+  font-size: 0.88rem;
+  font-weight: 700;
+}
+
 .budget-card-btn {
   text-align: left;
   width: 100%;

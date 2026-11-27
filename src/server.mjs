@@ -206,6 +206,79 @@ export function createAppHandler({
           });
         }
 
+        const txPatchMatch = url.pathname.match(/^\/api\/transactions\/([^/]+)$/);
+        if (req.method === 'PATCH' && txPatchMatch) {
+          const txId = txPatchMatch[1];
+          const body = await readJsonBody(req);
+          try {
+            const updated = ledger.updateTransaction(userId, txId, {
+              amountMinor: body.amountMinor !== undefined ? Number(body.amountMinor) : undefined,
+              categoryId: body.categoryId !== undefined ? body.categoryId : undefined,
+              occurredOn: body.occurredOn !== undefined ? body.occurredOn : undefined,
+              note: body.note !== undefined ? body.note : undefined,
+            });
+            return replyJson(200, { transaction: updated });
+          } catch (err) {
+            const status = /access denied|not found/i.test(err.message) ? 403 : 400;
+            return replyJson(status, { error: err.message });
+          }
+        }
+
+        const accPatchMatch = url.pathname.match(/^\/api\/accounts\/([^/]+)$/);
+        if (req.method === 'PATCH' && accPatchMatch) {
+          const accountId = accPatchMatch[1];
+          const body = await readJsonBody(req);
+          try {
+            const account = ledger.updateAccount(userId, accountId, {
+              name: body.name,
+              includeInSafeToSpend: body.includeInSafeToSpend,
+              isArchived: body.isArchived,
+            });
+            return replyJson(200, { account });
+          } catch (err) {
+            const status = /access denied|not found/i.test(err.message) ? 403 : 400;
+            return replyJson(status, { error: err.message });
+          }
+        }
+
+        const catPatchMatch = url.pathname.match(/^\/api\/categories\/([^/]+)$/);
+        if (req.method === 'PATCH' && catPatchMatch) {
+          const categoryId = catPatchMatch[1];
+          const body = await readJsonBody(req);
+          try {
+            const category = ledger.updateCategory(userId, categoryId, {
+              name: body.name,
+              monthlyCapMinor: body.monthlyCapMinor !== undefined
+                ? (body.monthlyCapMinor !== null ? Number(body.monthlyCapMinor) : null)
+                : undefined,
+            });
+            return replyJson(200, { category });
+          } catch (err) {
+            const status = /access denied|not found/i.test(err.message) ? 403 : 400;
+            return replyJson(status, { error: err.message });
+          }
+        }
+
+        const recurringPatchMatch = url.pathname.match(/^\/api\/recurring\/([^/]+)$/);
+        if (req.method === 'PATCH' && recurringPatchMatch) {
+          const ruleId = recurringPatchMatch[1];
+          const body = await readJsonBody(req);
+          try {
+            const rule = ledger.updateRecurringRule(userId, ruleId, {
+              title: body.title,
+              defaultAmountMinor: body.defaultAmountMinor !== undefined ? Number(body.defaultAmountMinor) : undefined,
+              accountId: body.accountId,
+              categoryId: body.categoryId,
+              nextDueDate: body.nextDueDate,
+              isActive: body.isActive,
+            });
+            return replyJson(200, { rule });
+          } catch (err) {
+            const status = /access denied|not found/i.test(err.message) ? 403 : 400;
+            return replyJson(status, { error: err.message });
+          }
+        }
+
         const voidMatch = url.pathname.match(/^\/api\/transactions\/([^/]+)\/void$/);
         if (req.method === 'POST' && voidMatch) {
           const txId = voidMatch[1];
