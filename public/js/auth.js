@@ -1,4 +1,5 @@
 import { state, closeAllModals, switchView, setAuthRequiredHandler } from './state.js';
+import { startRealtimeSync, stopRealtimeSync } from './realtime.js';
 
 export function showAuthError(msg) {
   const el = document.getElementById('authErrorBanner');
@@ -30,6 +31,7 @@ export function setAuthMode(mode) {
 }
 
 export function showAuthView({ demoEnabled = state.demoEnabled } = {}) {
+  stopRealtimeSync();
   closeAllModals();
   state.user = null;
   state.dashboard = null;
@@ -77,6 +79,7 @@ export function showAppShell(user) {
   document.getElementById('authView').classList.add('hidden');
   document.querySelector('.topbar').classList.remove('hidden');
   document.querySelector('main.container').classList.remove('hidden');
+  startRealtimeSync();
 }
 
 export function initAuthHandlers({ onAuthenticated }) {

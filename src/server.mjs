@@ -104,6 +104,35 @@ export function createAppHandler({
   const ledger = createLedgerDb(dbPath);
   const { demoUserId, secondUserId, personalUserId } = seedDefaultTenants(ledger, { disableDemo });
   const demoEnabled = !disableDemo;
+  const sseClients = new Map();
+
+  function notifyUser(userId, reason = 'mutation') {
+    const clients = sseClients.get(userId);
+    if (!clients || clients.size === 0) return;
+    const frame = `event: ledger_updated\ndata: ${JSON.stringify({ reason, ts: Date.now() })}\n\n`;
+    for (const clientRes of clients) {
+      try {
+        clientRes.write(frame);
+      } catch {
+        clients.delete(clientRes);
+      }
+    }
+  }
+
+  const heartbeatTimer = setInterval(() => {
+    for (const clients of sseClients.values()) {
+      for (const clientRes of clients) {
+        try {
+          clientRes.write(': ping\n\n');
+        } catch {
+          clients.delete(clientRes);
+        }
+      }
+    }
+  }, 25000);
+  if (typeof heartbeatTimer.unref === 'function') {
+    heartbeatTimer.unref();
+  }
 
   const handler = async (req, res) => {
     try {
@@ -175,6 +204,28 @@ export function createAppHandler({
         const authHeaders = renewal?.renewed ? { 'set-cookie': buildSessionCookie(rawToken, req) } : {};
         const replyJson = (statusCode, payload) => sendJson(res, statusCode, payload, authHeaders);
 
+        if (req.method === 'GET' && url.pathname === '/api/events') {
+          res.writeHead(200, {
+            'content-type': 'text/event-stream; charset=utf-8',
+            'cache-control': 'no-cache, no-transform',
+            connection: 'keep-alive',
+            ...authHeaders,
+          });
+          res.write(': connected\n\n');
+          if (!sseClients.has(userId)) {
+            sseClients.set(userId, new Set());
+          }
+          const userStreams = sseClients.get(userId);
+          userStreams.add(res);
+          req.on('close', () => {
+            userStreams.delete(res);
+            if (userStreams.size === 0) {
+              sseClients.delete(userId);
+            }
+          });
+          return;
+        }
+
         if (req.method === 'GET' && url.pathname === '/api/dashboard') {
           const refDate = url.searchParams.get('date') || new Date().toISOString().slice(0, 10);
           const dash = ledger.getCycleDashboard(userId, refDate);
@@ -208,6 +259,7 @@ export function createAppHandler({
 
           const dash = ledger.getCycleDashboard(userId, tx.occurredOn);
           const catSummary = dash.categories.find((c) => c.id === tx.categoryId);
+          notifyUser(userId, 'transaction_created');
           return replyJson(201, {
             transaction: tx,
             categoryRemainingCapMinor: catSummary ? catSummary.remainingCapMinor : null,
@@ -226,6 +278,7 @@ export function createAppHandler({
               occurredOn: body.occurredOn !== undefined ? body.occurredOn : undefined,
               note: body.note !== undefined ? body.note : undefined,
             });
+            notifyUser(userId, 'transaction_updated');
             return replyJson(200, { transaction: updated });
           } catch (err) {
             const status = /access denied|not found/i.test(err.message) ? 403 : 400;
@@ -243,6 +296,7 @@ export function createAppHandler({
               includeInSafeToSpend: body.includeInSafeToSpend,
               isArchived: body.isArchived,
             });
+            notifyUser(userId, 'account_updated');
             return replyJson(200, { account });
           } catch (err) {
             const status = /access denied|not found/i.test(err.message) ? 403 : 400;
@@ -261,6 +315,7 @@ export function createAppHandler({
                 ? (body.monthlyCapMinor !== null ? Number(body.monthlyCapMinor) : null)
                 : undefined,
             });
+            notifyUser(userId, 'category_updated');
             return replyJson(200, { category });
           } catch (err) {
             const status = /access denied|not found/i.test(err.message) ? 403 : 400;
@@ -281,6 +336,7 @@ export function createAppHandler({
               nextDueDate: body.nextDueDate,
               isActive: body.isActive,
             });
+            notifyUser(userId, 'recurring_updated');
             return replyJson(200, { rule });
           } catch (err) {
             const status = /access denied|not found/i.test(err.message) ? 403 : 400;
@@ -293,6 +349,7 @@ export function createAppHandler({
           const txId = voidMatch[1];
           try {
             const voided = ledger.voidTransaction(userId, txId);
+            notifyUser(userId, 'transaction_voided');
             return replyJson(200, { transaction: voided });
           } catch (err) {
             return replyJson(403, { error: err.message });
@@ -304,6 +361,7 @@ export function createAppHandler({
           const ruleId = recurringPostMatch[1];
           const body = await readJsonBody(req);
           const result = ledger.postRecurringRule(userId, ruleId, body);
+          notifyUser(userId, 'recurring_posted');
           return replyJson(200, result);
         }
 
@@ -311,6 +369,7 @@ export function createAppHandler({
         if (req.method === 'POST' && recurringSkipMatch) {
           const ruleId = recurringSkipMatch[1];
           const rule = ledger.skipRecurringRuleCycle(userId, ruleId);
+          notifyUser(userId, 'recurring_skipped');
           return replyJson(200, { rule });
         }
 
@@ -323,6 +382,7 @@ export function createAppHandler({
             body.occurredOn || new Date().toISOString().slice(0, 10),
             body.note || 'Weekly Desktop Balance Reconciliation'
           );
+          notifyUser(userId, 'account_reconciled');
           return replyJson(200, result);
         }
 
@@ -334,6 +394,7 @@ export function createAppHandler({
             initialBalanceMinor: Number(body.initialBalanceMinor || 0),
             includeInSafeToSpend: body.includeInSafeToSpend,
           });
+          notifyUser(userId, 'account_created');
           return replyJson(201, { account });
         }
 
@@ -345,6 +406,7 @@ export function createAppHandler({
             monthlyCapMinor: body.monthlyCapMinor !== null && body.monthlyCapMinor !== undefined ? Number(body.monthlyCapMinor) : null,
             color: body.color || '#6366f1',
           });
+          notifyUser(userId, 'category_created');
           return replyJson(201, { category });
         }
 
@@ -357,6 +419,7 @@ export function createAppHandler({
             categoryId,
             body.monthlyCapMinor !== null && body.monthlyCapMinor !== undefined ? Number(body.monthlyCapMinor) : null
           );
+          notifyUser(userId, 'category_cap_updated');
           return replyJson(200, { category });
         }
 
@@ -371,6 +434,7 @@ export function createAppHandler({
             frequency: body.frequency || 'MONTHLY',
             nextDueDate: body.nextDueDate,
           });
+          notifyUser(userId, 'recurring_created');
           return replyJson(201, { rule });
         }
 
@@ -380,6 +444,7 @@ export function createAppHandler({
             homeCurrencyCode: body.homeCurrencyCode,
             budgetCycleStartDay: body.budgetCycleStartDay,
           });
+          notifyUser(userId, 'settings_updated');
           return replyJson(200, { user: updatedUser });
         }
 

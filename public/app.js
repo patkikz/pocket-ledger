@@ -6,6 +6,7 @@ import { initAccountHandlers } from './js/accounts.js';
 import { initBudgetAndRecurringHandlers, openAddCategoryModal } from './js/budgets.js';
 import { initActivityHandlers, ensureActivityLoaded } from './js/activity.js';
 import { initSettingsHandlers } from './js/settings.js';
+import { initRealtimeWakeRefresh } from './js/realtime.js';
 
 // Global Navigation & Modal Chrome
 document.querySelectorAll('.nav-tab').forEach((tab) => {
@@ -40,6 +41,7 @@ initAccountHandlers();
 initBudgetAndRecurringHandlers();
 initActivityHandlers();
 initSettingsHandlers();
+initRealtimeWakeRefresh();
 
 function hideBootLoader() {
   const loader = document.getElementById('bootLoader');
