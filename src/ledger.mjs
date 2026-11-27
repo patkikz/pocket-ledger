@@ -1,5 +1,7 @@
 import { DatabaseSync } from 'node:sqlite';
 import crypto from 'node:crypto';
+import fs from 'node:fs';
+import path from 'node:path';
 
 const VALID_ACCOUNT_TYPES = new Set(['CASH_CHECKING', 'SAVINGS', 'CREDIT_CARD']);
 const VALID_CATEGORY_KINDS = new Set(['EXPENSE', 'INCOME']);
@@ -66,6 +68,9 @@ function assertSignedIntegerMinor(val, label = 'amountMinor') {
 }
 
 export function createLedgerDb(dbPath = ':memory:') {
+  if (dbPath && dbPath !== ':memory:' && !dbPath.startsWith('file:')) {
+    fs.mkdirSync(path.dirname(dbPath), { recursive: true });
+  }
   const db = new DatabaseSync(dbPath);
   db.exec(`
     PRAGMA foreign_keys = ON;

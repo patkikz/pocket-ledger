@@ -51,9 +51,9 @@ test('GET /api/health returns 200 { ok: true } without authentication', async ()
   assert.equal(data.status, 'healthy');
 });
 
-test('createAppHandler uses process.env.DB_PATH when dbPath option is omitted', () => {
+test('createAppHandler uses process.env.DB_PATH and creates missing parent directories', () => {
   const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'pocket-ledger-dbpath-'));
-  const customDbPath = path.join(tmpDir, 'custom.sqlite');
+  const customDbPath = path.join(tmpDir, 'nested', 'data', 'custom.sqlite');
   const prevDbPath = process.env.DB_PATH;
   process.env.DB_PATH = customDbPath;
 
