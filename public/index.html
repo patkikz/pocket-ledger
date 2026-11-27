@@ -544,6 +544,40 @@
             </div>
 
             <div class="account-group">
+              <h3 class="account-group-title">App PIN Lock</h3>
+              <form id="pinSettingsForm" class="account-panel">
+                <p id="demoPinNotice" class="account-demo-notice hidden">Demo accounts cannot set an App PIN.</p>
+                <div id="pinSettingsFields">
+                  <div class="account-panel-row">
+                    <div class="account-row-meta">
+                      <span class="account-row-label">Status</span>
+                      <span class="account-row-hint">Lock app on launch &amp; after inactivity</span>
+                    </div>
+                    <span id="pinStatusBadge" class="pin-status-badge">Not set</span>
+                  </div>
+                  <div class="account-panel-row">
+                    <label for="pinInput" class="account-row-label">4-digit PIN</label>
+                    <input
+                      type="password"
+                      id="pinInput"
+                      class="input-field account-row-input"
+                      inputmode="numeric"
+                      pattern="[0-9]{4}"
+                      maxlength="4"
+                      placeholder="Enter 4 digits"
+                      autocomplete="off"
+                      required
+                    />
+                  </div>
+                  <div class="account-panel-footer pin-footer-actions">
+                    <button type="button" class="btn-secondary btn-sm profile-row-danger hidden" id="removePinBtn">Remove PIN</button>
+                    <button type="submit" class="btn-primary btn-sm" id="savePinBtn">Set PIN</button>
+                  </div>
+                </div>
+              </form>
+            </div>
+
+            <div class="account-group">
               <h3 class="account-group-title">Data &amp; Session</h3>
               <div class="account-panel">
                 <div class="account-panel-row">
@@ -863,6 +897,40 @@
       <polyline points="18 15 12 9 6 15"/>
     </svg>
   </button>
+
+  <!-- APP PIN LOCK OVERLAY -->
+  <div id="pinLockOverlay" class="pin-lock-overlay hidden" role="dialog" aria-modal="true" aria-labelledby="pinLockTitle">
+    <div class="pin-lock-card">
+      <div class="pin-lock-avatar-wrap">
+        <span id="pinLockAvatar" class="pin-lock-avatar">?</span>
+        <span class="pin-lock-mini-badge" aria-hidden="true">
+          <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+            <rect x="3" y="11" width="18" height="11" rx="2" ry="2"/>
+            <path d="M7 11V7a5 5 0 0 1 10 0v4"/>
+          </svg>
+        </span>
+      </div>
+      <p id="pinLockUserLabel" class="pin-lock-user">Welcome back</p>
+      <h2 id="pinLockTitle" class="pin-lock-title">Enter your 4-digit PIN</h2>
+      <div id="pinDots" class="pin-dots" aria-hidden="true"></div>
+      <p id="pinLockError" class="pin-lock-error hidden" role="alert"></p>
+      <div class="pin-keypad">
+        <button type="button" class="pin-circle-key" data-pin-key="1">1</button>
+        <button type="button" class="pin-circle-key" data-pin-key="2">2</button>
+        <button type="button" class="pin-circle-key" data-pin-key="3">3</button>
+        <button type="button" class="pin-circle-key" data-pin-key="4">4</button>
+        <button type="button" class="pin-circle-key" data-pin-key="5">5</button>
+        <button type="button" class="pin-circle-key" data-pin-key="6">6</button>
+        <button type="button" class="pin-circle-key" data-pin-key="7">7</button>
+        <button type="button" class="pin-circle-key" data-pin-key="8">8</button>
+        <button type="button" class="pin-circle-key" data-pin-key="9">9</button>
+        <button type="button" class="pin-circle-key pin-circle-fn" data-pin-key="clear">Clear</button>
+        <button type="button" class="pin-circle-key" data-pin-key="0">0</button>
+        <button type="button" class="pin-circle-key pin-circle-fn" data-pin-key="back" aria-label="Backspace">⌫</button>
+      </div>
+      <button type="button" class="text-link pin-logout-link" id="pinLogoutBtn">Sign out</button>
+    </div>
+  </div>
 
   <script type="module" src="/app.js"></script>
 </body>

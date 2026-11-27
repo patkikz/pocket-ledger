@@ -528,6 +528,26 @@ export function createAppHandler({
           return replyJson(200, { ok: true });
         }
 
+        if (req.method === 'POST' && url.pathname === '/api/auth/pin') {
+          const body = await readJsonBody(req);
+          const updatedUser = await ledger.setPin(userId, body.pin);
+          return replyJson(200, { ok: true, user: updatedUser });
+        }
+
+        if (req.method === 'DELETE' && url.pathname === '/api/auth/pin') {
+          const updatedUser = await ledger.removePin(userId);
+          return replyJson(200, { ok: true, user: updatedUser });
+        }
+
+        if (req.method === 'POST' && url.pathname === '/api/auth/pin/verify') {
+          const body = await readJsonBody(req);
+          const valid = await ledger.verifyPin(userId, body.pin);
+          if (!valid) {
+            return replyJson(400, { valid: false, error: 'Incorrect PIN' });
+          }
+          return replyJson(200, { valid: true });
+        }
+
         if (req.method === 'GET' && url.pathname === '/api/export.csv') {
           const csv = await ledger.exportLedgerCsv(userId);
           res.writeHead(200, {

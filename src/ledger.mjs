@@ -19,6 +19,12 @@ const STARTER_CATEGORIES = [
   { name: 'Income / Paycheck', kind: 'INCOME', monthlyCapMinor: null, icon: 'briefcase', color: '#14b8a6' },
 ];
 
+function hashSecret(secret) {
+  const salt = crypto.randomBytes(16).toString('hex');
+  const hash = crypto.scryptSync(secret, salt, 64).toString('hex');
+  return `${salt}:${hash}`;
+}
+
 export function hashPassword(password) {
   if (typeof password !== 'string' || password.length < 8) {
     const err = new TypeError('Password must be at least 8 characters long');
@@ -26,9 +32,16 @@ export function hashPassword(password) {
     err.statusCode = 400;
     throw err;
   }
-  const salt = crypto.randomBytes(16).toString('hex');
-  const hash = crypto.scryptSync(password, salt, 64).toString('hex');
-  return `${salt}:${hash}`;
+  return hashSecret(password);
+}
+
+export function hashPin(pin) {
+  if (typeof pin !== 'string' || !/^\d{4}$/.test(pin)) {
+    const err = new RangeError('PIN must be exactly 4 digits');
+    err.statusCode = 400;
+    throw err;
+  }
+  return hashSecret(pin);
 }
 
 export function verifyPassword(password, storedHash) {
@@ -189,6 +202,9 @@ export function createLedgerDb(dbPath = ':memory:') {
   }
   if (!userColumns.some((col) => col.name === 'default_account_id')) {
     db.exec(`ALTER TABLE users ADD COLUMN default_account_id TEXT`);
+  }
+  if (!userColumns.some((col) => col.name === 'pin_hash')) {
+    db.exec(`ALTER TABLE users ADD COLUMN pin_hash TEXT`);
   }
 
   let txDepth = 0;
@@ -432,6 +448,7 @@ export function createLedgerDb(dbPath = ':memory:') {
       homeCurrencyCode: u.home_currency_code,
       budgetCycleStartDay: Number(u.budget_cycle_start_day),
       lastUsedAccountId: u.last_used_account_id,
+      hasPin: Boolean(u.pin_hash),
       createdAt: u.created_at,
     };
   }
@@ -546,6 +563,42 @@ export function createLedgerDb(dbPath = ':memory:') {
       }
     });
     return true;
+  }
+
+  function setPin(userId, pin) {
+    const row = db.prepare(`SELECT id, email FROM users WHERE id = ?`).get(userId);
+    if (!row) throw new Error('User not found');
+    if (DEMO_EMAILS.has(String(row.email).toLowerCase())) {
+      const err = new Error('Demo accounts cannot set a PIN');
+      err.statusCode = 403;
+      throw err;
+    }
+    const nextHash = hashPin(pin);
+    db.prepare(`UPDATE users SET pin_hash = ? WHERE id = ?`).run(nextHash, userId);
+    return getUser(userId);
+  }
+
+  function removePin(userId) {
+    const row = db.prepare(`SELECT id, email FROM users WHERE id = ?`).get(userId);
+    if (!row) throw new Error('User not found');
+    if (DEMO_EMAILS.has(String(row.email).toLowerCase())) {
+      const err = new Error('Demo accounts cannot modify PIN settings');
+      err.statusCode = 403;
+      throw err;
+    }
+    db.prepare(`UPDATE users SET pin_hash = NULL WHERE id = ?`).run(userId);
+    return getUser(userId);
+  }
+
+  function verifyPin(userId, pin) {
+    if (typeof pin !== 'string' || !/^\d{4}$/.test(pin)) {
+      return false;
+    }
+    const row = db.prepare(`SELECT pin_hash FROM users WHERE id = ?`).get(userId);
+    if (!row || !row.pin_hash) {
+      return false;
+    }
+    return verifyPassword(pin, row.pin_hash);
   }
 
   function createAccount(userId, {
@@ -1570,6 +1623,9 @@ export function createLedgerDb(dbPath = ':memory:') {
     updateUserProfile,
     updateUserSettings,
     changePassword,
+    setPin,
+    removePin,
+    verifyPin,
     createAccount,
     getAccount,
     listAccounts,

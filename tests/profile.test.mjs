@@ -304,6 +304,8 @@ test('Frontend Profile dropdown, Account settings view markup, and service worke
   assert.match(html, /id="view-profile"/);
   assert.match(html, /id="openProfileBtn"/);
   assert.match(html, /id="confirmOverlay"/);
+  assert.match(html, /id="pinLockOverlay"/);
+  assert.match(html, /id="pinSettingsForm"/);
   assert.equal(html.includes('id="settingsOverlay"'), false);
   for (const id of ['authPassword', 'currentPasswordInput', 'newPasswordInput', 'confirmPasswordInput']) {
     assert.match(html, new RegExp(`data-toggle-password="${id}"`));
@@ -313,6 +315,7 @@ test('Frontend Profile dropdown, Account settings view markup, and service worke
   assert.match(sw, /'\/js\/profile\.js'/);
   assert.match(sw, /'\/js\/modal\.js'/);
   assert.match(sw, /'\/js\/confirm\.js'/);
+  assert.match(sw, /'\/js\/pin-lock\.js'/);
 });
 
 test('SPA routes (/accounts, /activity, /profile, /profile/security) serve index.html for refresh support', async () => {
@@ -323,6 +326,66 @@ test('SPA routes (/accounts, /activity, /profile, /profile/security) serve index
       assert.equal(res.status, 200, `${route} should return 200`);
       assert.match(res.text, /id="view-profile"/);
     }
+  } finally {
+    ledger.db.close();
+  }
+});
+
+test('App PIN lock: setPin, verifyPin, removePin, and HTTP /api/auth/pin lifecycle', async () => {
+  const { handler, ledger } = createAppHandler({ dbPath: ':memory:' });
+  try {
+    const reg = await invokeHandler(handler, {
+      method: 'POST',
+      url: '/api/auth/register',
+      headers: { 'content-type': 'application/json' },
+      body: { email: 'pin-user@example.com', password: 'password123' },
+    });
+    assert.equal(reg.status, 201);
+    assert.equal(reg.json().user.hasPin, false);
+    const cookie = extractCookiePair(reg);
+
+    const badPin = await invokeHandler(handler, {
+      method: 'POST',
+      url: '/api/auth/pin',
+      headers: { 'content-type': 'application/json', cookie },
+      body: { pin: '12345' },
+    });
+    assert.equal(badPin.status, 400);
+
+    const setRes = await invokeHandler(handler, {
+      method: 'POST',
+      url: '/api/auth/pin',
+      headers: { 'content-type': 'application/json', cookie },
+      body: { pin: '2468' },
+    });
+    assert.equal(setRes.status, 200);
+    assert.equal(setRes.json().user.hasPin, true);
+
+    const wrongVerify = await invokeHandler(handler, {
+      method: 'POST',
+      url: '/api/auth/pin/verify',
+      headers: { 'content-type': 'application/json', cookie },
+      body: { pin: '1111' },
+    });
+    assert.equal(wrongVerify.status, 400);
+    assert.equal(wrongVerify.json().valid, false);
+
+    const okVerify = await invokeHandler(handler, {
+      method: 'POST',
+      url: '/api/auth/pin/verify',
+      headers: { 'content-type': 'application/json', cookie },
+      body: { pin: '2468' },
+    });
+    assert.equal(okVerify.status, 200);
+    assert.equal(okVerify.json().valid, true);
+
+    const delRes = await invokeHandler(handler, {
+      method: 'DELETE',
+      url: '/api/auth/pin',
+      headers: { cookie },
+    });
+    assert.equal(delRes.status, 200);
+    assert.equal(delRes.json().user.hasPin, false);
   } finally {
     ledger.db.close();
   }

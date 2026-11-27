@@ -1,7 +1,7 @@
 import pg from 'pg';
 import crypto from 'node:crypto';
 import { AsyncLocalStorage } from 'node:async_hooks';
-import { DEMO_EMAILS, VALID_AVATAR_COLORS, VALID_THEMES } from './ledger.mjs';
+import { DEMO_EMAILS, VALID_AVATAR_COLORS, VALID_THEMES, hashPin } from './ledger.mjs';
 
 const { Pool } = pg;
 
@@ -259,6 +259,7 @@ export function createPostgresLedger(connectionString, { pool: injectedPool } = 
       `ALTER TABLE users ADD COLUMN IF NOT EXISTS avatar_color TEXT NOT NULL DEFAULT '#6366f1'`,
       `ALTER TABLE users ADD COLUMN IF NOT EXISTS theme TEXT NOT NULL DEFAULT 'system'`,
       `ALTER TABLE users ADD COLUMN IF NOT EXISTS default_account_id TEXT`,
+      `ALTER TABLE users ADD COLUMN IF NOT EXISTS pin_hash TEXT`,
     ];
 
     for (const sql of statements) {
@@ -310,6 +311,7 @@ export function createPostgresLedger(connectionString, { pool: injectedPool } = 
       homeCurrencyCode: u.home_currency_code,
       budgetCycleStartDay: Number(u.budget_cycle_start_day),
       lastUsedAccountId: u.last_used_account_id,
+      hasPin: Boolean(u.pin_hash),
       createdAt: u.created_at,
     };
   }
@@ -537,6 +539,42 @@ export function createPostgresLedger(connectionString, { pool: injectedPool } = 
       }
     });
     return true;
+  }
+
+  async function setPin(userId, pin) {
+    const row = await queryOne(`SELECT id, email FROM users WHERE id = $1`, [userId]);
+    if (!row) throw new Error('User not found');
+    if (DEMO_EMAILS.has(String(row.email).toLowerCase())) {
+      const err = new Error('Demo accounts cannot set a PIN');
+      err.statusCode = 403;
+      throw err;
+    }
+    const nextHash = hashPin(pin);
+    await query(`UPDATE users SET pin_hash = $1 WHERE id = $2`, [nextHash, userId]);
+    return getUser(userId);
+  }
+
+  async function removePin(userId) {
+    const row = await queryOne(`SELECT id, email FROM users WHERE id = $1`, [userId]);
+    if (!row) throw new Error('User not found');
+    if (DEMO_EMAILS.has(String(row.email).toLowerCase())) {
+      const err = new Error('Demo accounts cannot modify PIN settings');
+      err.statusCode = 403;
+      throw err;
+    }
+    await query(`UPDATE users SET pin_hash = NULL WHERE id = $1`, [userId]);
+    return getUser(userId);
+  }
+
+  async function verifyPin(userId, pin) {
+    if (typeof pin !== 'string' || !/^\d{4}$/.test(pin)) {
+      return false;
+    }
+    const row = await queryOne(`SELECT pin_hash FROM users WHERE id = $1`, [userId]);
+    if (!row || !row.pin_hash) {
+      return false;
+    }
+    return verifyPassword(pin, row.pin_hash);
   }
 
   async function getAccount(userId, accountId) {
@@ -1433,6 +1471,9 @@ export function createPostgresLedger(connectionString, { pool: injectedPool } = 
     updateUserProfile,
     updateUserSettings,
     changePassword,
+    setPin,
+    removePin,
+    verifyPin,
     createAccount,
     getAccount,
     listAccounts,

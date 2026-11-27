@@ -1,6 +1,7 @@
 import { state, getTodayIsoDate, closeAllModals, switchView, setAuthRequiredHandler } from './state.js';
 import { startRealtimeSync, stopRealtimeSync } from './realtime.js';
 import { renderProfile } from './profile.js';
+import { clearPinSession } from './pin-lock.js';
 
 export function showAuthError(msg) {
   const el = document.getElementById('authErrorBanner');
@@ -33,6 +34,7 @@ export function setAuthMode(mode) {
 
 export function showAuthView({ demoEnabled = state.demoEnabled } = {}) {
   stopRealtimeSync();
+  clearPinSession();
   closeAllModals();
   state.user = null;
   state.dashboard = null;

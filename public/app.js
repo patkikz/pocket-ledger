@@ -7,6 +7,7 @@ import { initAccountHandlers } from './js/accounts.js';
 import { initBudgetAndRecurringHandlers, openAddCategoryModal } from './js/budgets.js';
 import { initActivityHandlers, ensureActivityLoaded } from './js/activity.js';
 import { initProfileHandlers } from './js/profile.js';
+import { initPinLockHandlers, requirePinIfEnabled } from './js/pin-lock.js';
 import { initRealtimeWakeRefresh } from './js/realtime.js';
 import { initPullToRefresh } from './js/pull-to-refresh.js';
 
@@ -74,6 +75,7 @@ initAccountHandlers();
 initBudgetAndRecurringHandlers();
 initActivityHandlers();
 initProfileHandlers();
+initPinLockHandlers();
 initRealtimeWakeRefresh();
 initPullToRefresh();
 
@@ -97,6 +99,7 @@ async function boot() {
     state.demoEnabled = Boolean(data.demoEnabled);
     if (data.authenticated && data.user) {
       showAppShell(data.user);
+      requirePinIfEnabled(data.user);
       await fetchDashboard();
       const { viewName, accountTab } = parseRoute(window.location.pathname);
       switchView(viewName, { push: false, accountTab });

@@ -10,6 +10,7 @@ import {
   getUserInitials,
 } from './state.js';
 import { fetchDashboard } from './dashboard.js';
+import { confirmDialog } from './confirm.js';
 
 const DEMO_EMAILS = new Set(['patrick@pocketledger.app', 'alex.isolated@pocketledger.app']);
 let selectedAvatarColor = '#6366f1';
@@ -82,6 +83,22 @@ export function renderProfile(user, accounts = []) {
   const isDemo = DEMO_EMAILS.has(String(user.email || '').toLowerCase());
   document.getElementById('demoPasswordNotice').classList.toggle('hidden', !isDemo);
   document.getElementById('changePasswordFields').classList.toggle('hidden', isDemo);
+
+  document.getElementById('demoPinNotice')?.classList.toggle('hidden', !isDemo);
+  document.getElementById('pinSettingsFields')?.classList.toggle('hidden', isDemo);
+  const pinBadge = document.getElementById('pinStatusBadge');
+  const removePinBtn = document.getElementById('removePinBtn');
+  const savePinBtn = document.getElementById('savePinBtn');
+  if (pinBadge) {
+    pinBadge.textContent = user.hasPin ? 'Enabled' : 'Not set';
+    pinBadge.classList.toggle('enabled', Boolean(user.hasPin));
+  }
+  if (removePinBtn) {
+    removePinBtn.classList.toggle('hidden', !user.hasPin);
+  }
+  if (savePinBtn) {
+    savePinBtn.textContent = user.hasPin ? 'Update PIN' : 'Set PIN';
+  }
 }
 
 async function patchProfile(patch, successMessage) {
@@ -243,6 +260,67 @@ export function initProfileHandlers() {
         showToast('Password updated.');
       } catch (err) {
         handleActionError(err, 'Could not update password.');
+      }
+    });
+  });
+
+  document.getElementById('pinSettingsForm')?.addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const pin = document.getElementById('pinInput').value.trim();
+    if (!/^\d{4}$/.test(pin)) {
+      showToast('PIN must be exactly 4 digits.', true);
+      return;
+    }
+    const saveBtn = document.getElementById('savePinBtn');
+    await withButtonLoading(saveBtn, 'Saving...', async () => {
+      try {
+        const res = await apiFetch('/api/auth/pin', {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({ pin }),
+        });
+        if (!res.ok) {
+          showToast(await readErrorMessage(res, 'Could not save PIN.'), true);
+          return;
+        }
+        const data = await res.json();
+        state.user = data.user;
+        try {
+          sessionStorage.setItem('pl_pin_unlocked', data.user.id);
+        } catch {
+          // ignore
+        }
+        e.target.reset();
+        renderProfile(data.user, state.dashboard?.accounts || []);
+        showToast('App PIN saved.');
+      } catch (err) {
+        handleActionError(err, 'Could not save PIN.');
+      }
+    });
+  });
+
+  document.getElementById('removePinBtn')?.addEventListener('click', async (e) => {
+    const confirmed = await confirmDialog({
+      title: 'Remove App PIN?',
+      message: 'PocketLedger will no longer ask for a PIN when opened.',
+      confirmText: 'Remove PIN',
+      cancelText: 'Cancel',
+      tone: 'danger',
+    });
+    if (!confirmed) return;
+    await withButtonLoading(e.currentTarget, 'Removing...', async () => {
+      try {
+        const res = await apiFetch('/api/auth/pin', { method: 'DELETE' });
+        if (!res.ok) {
+          showToast(await readErrorMessage(res, 'Could not remove PIN.'), true);
+          return;
+        }
+        const data = await res.json();
+        state.user = data.user;
+        renderProfile(data.user, state.dashboard?.accounts || []);
+        showToast('App PIN removed.');
+      } catch (err) {
+        handleActionError(err, 'Could not remove PIN.');
       }
     });
   });
