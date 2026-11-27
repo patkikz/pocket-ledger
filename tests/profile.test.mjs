@@ -311,6 +311,7 @@ test('Frontend Profile dropdown, Account settings view markup, and service worke
 
   const sw = fs.readFileSync(path.resolve('public/sw.js'), 'utf8');
   assert.match(sw, /'\/js\/profile\.js'/);
+  assert.match(sw, /'\/js\/modal\.js'/);
   assert.match(sw, /'\/js\/confirm\.js'/);
 });
 

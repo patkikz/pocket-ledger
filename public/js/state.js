@@ -1,3 +1,6 @@
+import { openModal, closeModal, closeAllModals } from './modal.js';
+export { openModal, closeModal, closeAllModals };
+
 export function getTodayIsoDate() {
   const now = new Date();
   const y = now.getFullYear();
@@ -140,18 +143,6 @@ export function switchView(viewName, { push = true, accountTab = state.activeAcc
     }
   }
   if (onViewChange) onViewChange(viewName);
-}
-
-export function openModal(id) {
-  document.getElementById(id).classList.remove('hidden');
-}
-
-export function closeModal(id) {
-  document.getElementById(id).classList.add('hidden');
-}
-
-export function closeAllModals() {
-  document.querySelectorAll('.modal-overlay').forEach((el) => el.classList.add('hidden'));
 }
 
 export async function apiFetch(url, opts = {}) {
