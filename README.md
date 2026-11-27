@@ -34,7 +34,8 @@ Then open `http://<your-PC-LAN-IP>:3000` on your phone.
 | :--- | :--- | :--- |
 | `HOST` | `127.0.0.1` | Bind address (`0.0.0.0` for LAN or cloud containers) |
 | `PORT` | `3000` | HTTP server port |
-| `DB_PATH` | `./pocket-ledger.sqlite` | Path to SQLite database file (point to a persistent disk in production) |
+| `DATABASE_URL` | unset | PostgreSQL connection string (e.g. Supabase **Session Pooler** URI). When set, uses PostgreSQL instead of SQLite. |
+| `DB_PATH` | `./pocket-ledger.sqlite` | Path to SQLite database file when `DATABASE_URL` is not set |
 | `DISABLE_DEMO` | unset (`0`) | Set to `1` in production to disable demo account seeding and demo login |
 
 ## Health Check

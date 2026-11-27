@@ -16,6 +16,9 @@ function ensureDemoPasswords(ledger) {
 }
 
 export function seedDefaultTenants(ledger, { disableDemo = process.env.DISABLE_DEMO === '1' } = {}) {
+  if (ledger.isAsync) {
+    return seedDefaultTenantsAsync(ledger, { disableDemo });
+  }
   if (disableDemo) {
     return {
       demoUserId: null,
@@ -324,5 +327,113 @@ function seedPersonalProfile(ledger) {
     color: '#14b8a6',
   });
 
+  return personal;
+}
+
+async function seedDefaultTenantsAsync(ledger, { disableDemo = false } = {}) {
+  if (disableDemo) {
+    return { demoUserId: null, secondUserId: null, personalUserId: null };
+  }
+
+  const existing = await ledger.getUser('user-demo-primary');
+  if (existing) {
+    if (!(await ledger.getUser('user-personal'))) {
+      await seedPersonalProfileAsync(ledger);
+    }
+    return {
+      demoUserId: existing.id,
+      secondUserId: 'user-demo-secondary',
+      personalUserId: 'user-personal',
+    };
+  }
+
+  const userA = await ledger.createUser({
+    id: 'user-demo-primary',
+    email: 'patrick@pocketledger.app',
+    homeCurrencyCode: 'USD',
+    budgetCycleStartDay: 1,
+    password: 'pocketledger-demo',
+  });
+
+  const checking = await ledger.createAccount(userA.id, {
+    id: 'acc-checking-primary',
+    name: 'Chase Checking',
+    type: 'CASH_CHECKING',
+    initialBalanceMinor: 345000,
+    includeInSafeToSpend: true,
+    occurredOn: '2026-11-01',
+  });
+  const ewallet = await ledger.createAccount(userA.id, {
+    id: 'acc-ewallet-primary',
+    name: 'Daily E-Wallet',
+    type: 'CASH_CHECKING',
+    initialBalanceMinor: 28550,
+    includeInSafeToSpend: true,
+    occurredOn: '2026-11-01',
+  });
+  await ledger.createAccount(userA.id, {
+    id: 'acc-savings-primary',
+    name: 'Emergency Vault',
+    type: 'SAVINGS',
+    initialBalanceMinor: 1200000,
+    includeInSafeToSpend: false,
+    occurredOn: '2026-11-01',
+  });
+  const creditCard = await ledger.createAccount(userA.id, {
+    id: 'acc-amex-primary',
+    name: 'Amex Gold Card',
+    type: 'CREDIT_CARD',
+    initialBalanceMinor: -42000,
+    includeInSafeToSpend: false,
+    occurredOn: '2026-11-01',
+  });
+
+  const dining = await ledger.createCategory(userA.id, { id: 'cat-dining', name: 'Dining & Coffee', kind: 'EXPENSE', monthlyCapMinor: 45000, icon: 'utensils', color: '#f59e0b' });
+  const groceries = await ledger.createCategory(userA.id, { id: 'cat-groceries', name: 'Groceries', kind: 'EXPENSE', monthlyCapMinor: 65000, icon: 'shopping-bag', color: '#10b981' });
+  await ledger.createCategory(userA.id, { id: 'cat-transport', name: 'Transit & Fuel', kind: 'EXPENSE', monthlyCapMinor: 25000, icon: 'car', color: '#3b82f6' });
+  const utilities = await ledger.createCategory(userA.id, { id: 'cat-utilities', name: 'Bills & Subs', kind: 'EXPENSE', monthlyCapMinor: 160000, icon: 'zap', color: '#8b5cf6' });
+  const shopping = await ledger.createCategory(userA.id, { id: 'cat-shopping', name: 'Shopping', kind: 'EXPENSE', monthlyCapMinor: 35000, icon: 'sparkles', color: '#ec4899' });
+  const salary = await ledger.createCategory(userA.id, { id: 'cat-salary', name: 'Salary & Paycheck', kind: 'INCOME', icon: 'briefcase', color: '#14b8a6' });
+
+  await ledger.recordTransaction(userA.id, { type: 'INCOME', amountMinor: 280000, accountId: checking.id, categoryId: salary.id, occurredOn: '2026-11-15', note: 'Mid-month payroll deposit' });
+  await ledger.recordTransaction(userA.id, { type: 'EXPENSE', amountMinor: 14280, accountId: creditCard.id, categoryId: groceries.id, occurredOn: '2026-11-18', note: 'Trader Joes weekly haul' });
+  await ledger.recordTransaction(userA.id, { type: 'EXPENSE', amountMinor: 1850, accountId: ewallet.id, categoryId: dining.id, occurredOn: '2026-11-21', note: 'Pour-over coffee & pastry' });
+  await ledger.recordTransaction(userA.id, { type: 'EXPENSE', amountMinor: 8900, accountId: creditCard.id, categoryId: shopping.id, occurredOn: '2026-11-22', note: 'Running shoes order' });
+  await ledger.recordTransaction(userA.id, { type: 'REFUND', amountMinor: 2500, accountId: creditCard.id, categoryId: shopping.id, occurredOn: '2026-11-24', note: 'Price match partial refund' });
+  await ledger.recordTransaction(userA.id, { type: 'TRANSFER', amountMinor: 42000, accountId: checking.id, transferDestinationAccountId: creditCard.id, occurredOn: '2026-11-25', note: 'Pay prior Amex statement balance' });
+  await ledger.recordTransaction(userA.id, { type: 'EXPENSE', amountMinor: 1475, accountId: ewallet.id, categoryId: dining.id, occurredOn: '2026-11-26', note: 'Lunch combo' });
+
+  await ledger.createRecurringRule(userA.id, { id: 'rule-rent', title: 'Apartment Rent', type: 'EXPENSE', defaultAmountMinor: 135000, accountId: checking.id, categoryId: utilities.id, frequency: 'MONTHLY', nextDueDate: '2026-11-28' });
+  await ledger.createRecurringRule(userA.id, { id: 'rule-fiber', title: 'Fiber Internet', type: 'EXPENSE', defaultAmountMinor: 6500, accountId: creditCard.id, categoryId: utilities.id, frequency: 'MONTHLY', nextDueDate: '2026-11-29' });
+
+  const userB = await ledger.createUser({
+    id: 'user-demo-secondary',
+    email: 'alex.isolated@pocketledger.app',
+    homeCurrencyCode: 'PHP',
+    budgetCycleStartDay: 15,
+    password: 'pocketledger-demo',
+  });
+  await ledger.createAccount(userB.id, { id: 'acc-bpi-secondary', name: 'BPI Payroll Checking', type: 'CASH_CHECKING', initialBalanceMinor: 6850000, includeInSafeToSpend: true, occurredOn: '2026-11-15' });
+  const gcash = await ledger.createAccount(userB.id, { id: 'acc-gcash-secondary', name: 'GCash Wallet', type: 'CASH_CHECKING', initialBalanceMinor: 420000, includeInSafeToSpend: true, occurredOn: '2026-11-15' });
+  const foodB = await ledger.createCategory(userB.id, { id: 'cat-food-secondary', name: 'Food & Grab', kind: 'EXPENSE', monthlyCapMinor: 1500000, icon: 'utensils', color: '#10b981' });
+  await ledger.recordTransaction(userB.id, { type: 'EXPENSE', amountMinor: 38500, accountId: gcash.id, categoryId: foodB.id, occurredOn: '2026-11-26', note: 'GrabFood dinner' });
+
+  await seedPersonalProfileAsync(ledger);
+  return { demoUserId: userA.id, secondUserId: userB.id, personalUserId: 'user-personal' };
+}
+
+async function seedPersonalProfileAsync(ledger) {
+  const personal = await ledger.createUser({
+    id: 'user-personal',
+    email: 'me@pocketledger.app',
+    homeCurrencyCode: 'USD',
+    budgetCycleStartDay: 1,
+    password: 'pocketledger-demo',
+  });
+  await ledger.createCategory(personal.id, { id: 'cat-personal-groceries', name: 'Groceries', kind: 'EXPENSE', monthlyCapMinor: 50000, icon: 'shopping-bag', color: '#10b981' });
+  await ledger.createCategory(personal.id, { id: 'cat-personal-dining', name: 'Dining & Coffee', kind: 'EXPENSE', monthlyCapMinor: 30000, icon: 'utensils', color: '#f59e0b' });
+  await ledger.createCategory(personal.id, { id: 'cat-personal-transport', name: 'Transport', kind: 'EXPENSE', monthlyCapMinor: 20000, icon: 'car', color: '#3b82f6' });
+  await ledger.createCategory(personal.id, { id: 'cat-personal-bills', name: 'Bills & Subs', kind: 'EXPENSE', monthlyCapMinor: 100000, icon: 'zap', color: '#8b5cf6' });
+  await ledger.createCategory(personal.id, { id: 'cat-personal-salary', name: 'Income / Paycheck', kind: 'INCOME', icon: 'briefcase', color: '#14b8a6' });
   return personal;
 }

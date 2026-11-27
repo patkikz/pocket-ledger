@@ -3,6 +3,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { createLedgerDb } from './ledger.mjs';
+import { createPostgresLedger } from './ledger-pg.mjs';
 import { seedDefaultTenants } from './seed.mjs';
 
 const __filename = fileURLToPath(import.meta.url);
@@ -98,11 +99,45 @@ function sendJson(res, statusCode, payload, extraHeaders = {}) {
 }
 
 export function createAppHandler({
-  dbPath = process.env.DB_PATH || path.join(__dirname, '..', 'pocket-ledger.sqlite'),
+  dbPath,
+  databaseUrl = process.env.DATABASE_URL,
   disableDemo = process.env.DISABLE_DEMO === '1',
 } = {}) {
-  const ledger = createLedgerDb(dbPath);
-  const { demoUserId, secondUserId, personalUserId } = seedDefaultTenants(ledger, { disableDemo });
+  const usePostgres = !dbPath && Boolean(databaseUrl);
+  const resolvedDbPath = dbPath || process.env.DB_PATH || path.join(__dirname, '..', 'pocket-ledger.sqlite');
+  const ledger = usePostgres
+    ? createPostgresLedger(databaseUrl)
+    : createLedgerDb(resolvedDbPath);
+
+  let demoUserId = null;
+  let secondUserId = null;
+  let personalUserId = null;
+  let readyPromise = null;
+
+  async function ensureReady() {
+    if (!readyPromise) {
+      readyPromise = (async () => {
+        if (ledger.init) {
+          await ledger.init();
+        }
+        const seeded = await seedDefaultTenants(ledger, { disableDemo });
+        demoUserId = seeded.demoUserId;
+        secondUserId = seeded.secondUserId;
+        personalUserId = seeded.personalUserId;
+      })();
+    }
+    return readyPromise;
+  }
+
+  // Eagerly seed synchronous SQLite immediately so tests inspecting demoUserId synchronously work
+  if (!ledger.isAsync) {
+    const seeded = seedDefaultTenants(ledger, { disableDemo });
+    demoUserId = seeded.demoUserId;
+    secondUserId = seeded.secondUserId;
+    personalUserId = seeded.personalUserId;
+    readyPromise = Promise.resolve();
+  }
+
   const demoEnabled = !disableDemo;
   const sseClients = new Map();
 
@@ -136,13 +171,18 @@ export function createAppHandler({
 
   const handler = async (req, res) => {
     try {
+      await ensureReady();
       const url = new URL(req.url, 'http://localhost');
       const cookies = parseCookies(req);
       const rawToken = cookies[SESSION_COOKIE_NAME] || null;
 
       if (req.method === 'GET' && url.pathname === '/api/health') {
         try {
-          ledger.db.prepare('SELECT 1 AS ok').get();
+          if (ledger.healthCheck) {
+            await ledger.healthCheck();
+          } else {
+            ledger.db.prepare('SELECT 1 AS ok').get();
+          }
           return sendJson(res, 200, { ok: true, status: 'healthy' });
         } catch (err) {
           return sendJson(res, 503, { ok: false, status: 'unhealthy', error: err.message });
@@ -153,7 +193,7 @@ export function createAppHandler({
         const body = await readJsonBody(req);
         let user;
         try {
-          user = ledger.registerUser({
+          user = await ledger.registerUser({
             email: body.email,
             password: body.password,
             ...(body.homeCurrencyCode !== undefined ? { homeCurrencyCode: body.homeCurrencyCode } : {}),
@@ -163,7 +203,7 @@ export function createAppHandler({
           const status = err.statusCode || (err.code === 'DUPLICATE_EMAIL' ? 409 : 400);
           return sendJson(res, status, { error: err.message || 'Registration failed' });
         }
-        const { rawToken: sessionToken } = ledger.createSession(user.id);
+        const { rawToken: sessionToken } = await ledger.createSession(user.id);
         return sendJson(res, 201, { user }, { 'set-cookie': buildSessionCookie(sessionToken, req) });
       }
 
@@ -173,43 +213,43 @@ export function createAppHandler({
         if (disableDemo && DEMO_EMAILS.has(normalizedEmail)) {
           return sendJson(res, 403, { error: 'Demo accounts are disabled' });
         }
-        const user = ledger.authenticateUser({
+        const user = await ledger.authenticateUser({
           email: body.email,
           password: body.password,
         });
         if (!user) {
           return sendJson(res, 401, { error: 'Invalid email or password' });
         }
-        const { rawToken: sessionToken } = ledger.createSession(user.id);
+        const { rawToken: sessionToken } = await ledger.createSession(user.id);
         return sendJson(res, 200, { user }, { 'set-cookie': buildSessionCookie(sessionToken, req) });
       }
 
       if (req.method === 'POST' && url.pathname === '/api/auth/logout') {
         if (rawToken) {
-          ledger.deleteSessionByToken(rawToken);
+          await ledger.deleteSessionByToken(rawToken);
         }
         return sendJson(res, 200, { ok: true }, { 'set-cookie': buildSessionCookie('', req, 0) });
       }
 
       if (req.method === 'GET' && url.pathname === '/api/auth/me') {
-        const session = rawToken ? ledger.getSessionByToken(rawToken) : null;
-        const user = session ? ledger.getUser(session.userId) : null;
+        const session = rawToken ? await ledger.getSessionByToken(rawToken) : null;
+        const user = session ? await ledger.getUser(session.userId) : null;
         if (!session || !user) {
           return sendJson(res, 200, { authenticated: false, user: null, demoEnabled });
         }
-        const renewal = ledger.renewSessionIfNeeded(session.id);
+        const renewal = await ledger.renewSessionIfNeeded(session.id);
         const extraHeaders = renewal?.renewed ? { 'set-cookie': buildSessionCookie(rawToken, req) } : {};
         return sendJson(res, 200, { authenticated: true, user, demoEnabled }, extraHeaders);
       }
 
       if (url.pathname.startsWith('/api/')) {
-        const session = rawToken ? ledger.getSessionByToken(rawToken) : null;
-        const user = session ? ledger.getUser(session.userId) : null;
+        const session = rawToken ? await ledger.getSessionByToken(rawToken) : null;
+        const user = session ? await ledger.getUser(session.userId) : null;
         if (!session || !user) {
           return sendJson(res, 401, { error: 'Authentication required' });
         }
         const userId = session.userId;
-        const renewal = ledger.renewSessionIfNeeded(session.id);
+        const renewal = await ledger.renewSessionIfNeeded(session.id);
         const authHeaders = renewal?.renewed ? { 'set-cookie': buildSessionCookie(rawToken, req) } : {};
         const replyJson = (statusCode, payload) => sendJson(res, statusCode, payload, authHeaders);
 
@@ -242,8 +282,10 @@ export function createAppHandler({
 
         if (req.method === 'GET' && url.pathname === '/api/dashboard') {
           const refDate = url.searchParams.get('date') || new Date().toISOString().slice(0, 10);
-          const dash = ledger.getCycleDashboard(userId, refDate);
-          const integrityAudits = dash.accounts.map((a) => ledger.verifyAccountIntegrity(userId, a.id));
+          const dash = await ledger.getCycleDashboard(userId, refDate);
+          const integrityAudits = await Promise.all(
+            dash.accounts.map((a) => ledger.verifyAccountIntegrity(userId, a.id))
+          );
           return replyJson(200, {
             ...dash,
             integrityAudits,
@@ -255,13 +297,13 @@ export function createAppHandler({
           const offset = Number(url.searchParams.get('offset') || 0);
           const type = url.searchParams.get('type') || 'ALL';
           const search = url.searchParams.get('q') || '';
-          const result = ledger.listTransactions(userId, { limit, offset, type, search });
+          const result = await ledger.listTransactions(userId, { limit, offset, type, search });
           return replyJson(200, result);
         }
 
         if (req.method === 'POST' && url.pathname === '/api/transactions') {
           const body = await readJsonBody(req);
-          const tx = ledger.recordTransaction(userId, {
+          const tx = await ledger.recordTransaction(userId, {
             type: body.type,
             amountMinor: Number(body.amountMinor),
             accountId: body.accountId,
@@ -271,7 +313,7 @@ export function createAppHandler({
             note: body.note || '',
           });
 
-          const dash = ledger.getCycleDashboard(userId, tx.occurredOn);
+          const dash = await ledger.getCycleDashboard(userId, tx.occurredOn);
           const catSummary = dash.categories.find((c) => c.id === tx.categoryId);
           notifyUser(userId, 'transaction_created');
           return replyJson(201, {
@@ -286,7 +328,7 @@ export function createAppHandler({
           const txId = txPatchMatch[1];
           const body = await readJsonBody(req);
           try {
-            const updated = ledger.updateTransaction(userId, txId, {
+            const updated = await ledger.updateTransaction(userId, txId, {
               amountMinor: body.amountMinor !== undefined ? Number(body.amountMinor) : undefined,
               categoryId: body.categoryId !== undefined ? body.categoryId : undefined,
               occurredOn: body.occurredOn !== undefined ? body.occurredOn : undefined,
@@ -305,7 +347,7 @@ export function createAppHandler({
           const accountId = accPatchMatch[1];
           const body = await readJsonBody(req);
           try {
-            const account = ledger.updateAccount(userId, accountId, {
+            const account = await ledger.updateAccount(userId, accountId, {
               name: body.name,
               includeInSafeToSpend: body.includeInSafeToSpend,
               isArchived: body.isArchived,
@@ -323,7 +365,7 @@ export function createAppHandler({
           const categoryId = catPatchMatch[1];
           const body = await readJsonBody(req);
           try {
-            const category = ledger.updateCategory(userId, categoryId, {
+            const category = await ledger.updateCategory(userId, categoryId, {
               name: body.name,
               monthlyCapMinor: body.monthlyCapMinor !== undefined
                 ? (body.monthlyCapMinor !== null ? Number(body.monthlyCapMinor) : null)
@@ -342,7 +384,7 @@ export function createAppHandler({
           const ruleId = recurringPatchMatch[1];
           const body = await readJsonBody(req);
           try {
-            const rule = ledger.updateRecurringRule(userId, ruleId, {
+            const rule = await ledger.updateRecurringRule(userId, ruleId, {
               title: body.title,
               defaultAmountMinor: body.defaultAmountMinor !== undefined ? Number(body.defaultAmountMinor) : undefined,
               accountId: body.accountId,
@@ -362,7 +404,7 @@ export function createAppHandler({
         if (req.method === 'POST' && voidMatch) {
           const txId = voidMatch[1];
           try {
-            const voided = ledger.voidTransaction(userId, txId);
+            const voided = await ledger.voidTransaction(userId, txId);
             notifyUser(userId, 'transaction_voided');
             return replyJson(200, { transaction: voided });
           } catch (err) {
@@ -374,7 +416,7 @@ export function createAppHandler({
         if (req.method === 'POST' && recurringPostMatch) {
           const ruleId = recurringPostMatch[1];
           const body = await readJsonBody(req);
-          const result = ledger.postRecurringRule(userId, ruleId, body);
+          const result = await ledger.postRecurringRule(userId, ruleId, body);
           notifyUser(userId, 'recurring_posted');
           return replyJson(200, result);
         }
@@ -382,14 +424,14 @@ export function createAppHandler({
         const recurringSkipMatch = url.pathname.match(/^\/api\/recurring\/([^/]+)\/skip$/);
         if (req.method === 'POST' && recurringSkipMatch) {
           const ruleId = recurringSkipMatch[1];
-          const rule = ledger.skipRecurringRuleCycle(userId, ruleId);
+          const rule = await ledger.skipRecurringRuleCycle(userId, ruleId);
           notifyUser(userId, 'recurring_skipped');
           return replyJson(200, { rule });
         }
 
         if (req.method === 'POST' && url.pathname === '/api/accounts/reconcile') {
           const body = await readJsonBody(req);
-          const result = ledger.reconcileAccountBalance(
+          const result = await ledger.reconcileAccountBalance(
             userId,
             body.accountId,
             Number(body.actualBalanceMinor),
@@ -402,7 +444,7 @@ export function createAppHandler({
 
         if (req.method === 'POST' && url.pathname === '/api/accounts') {
           const body = await readJsonBody(req);
-          const account = ledger.createAccount(userId, {
+          const account = await ledger.createAccount(userId, {
             name: body.name,
             type: body.type,
             initialBalanceMinor: Number(body.initialBalanceMinor || 0),
@@ -414,7 +456,7 @@ export function createAppHandler({
 
         if (req.method === 'POST' && url.pathname === '/api/categories') {
           const body = await readJsonBody(req);
-          const category = ledger.createCategory(userId, {
+          const category = await ledger.createCategory(userId, {
             name: body.name,
             kind: body.kind || 'EXPENSE',
             monthlyCapMinor: body.monthlyCapMinor !== null && body.monthlyCapMinor !== undefined ? Number(body.monthlyCapMinor) : null,
@@ -428,7 +470,7 @@ export function createAppHandler({
         if (req.method === 'POST' && catCapMatch) {
           const categoryId = catCapMatch[1];
           const body = await readJsonBody(req);
-          const category = ledger.updateCategoryCap(
+          const category = await ledger.updateCategoryCap(
             userId,
             categoryId,
             body.monthlyCapMinor !== null && body.monthlyCapMinor !== undefined ? Number(body.monthlyCapMinor) : null
@@ -439,7 +481,7 @@ export function createAppHandler({
 
         if (req.method === 'POST' && url.pathname === '/api/recurring') {
           const body = await readJsonBody(req);
-          const rule = ledger.createRecurringRule(userId, {
+          const rule = await ledger.createRecurringRule(userId, {
             title: body.title,
             type: body.type || 'EXPENSE',
             defaultAmountMinor: Number(body.defaultAmountMinor),
@@ -454,7 +496,7 @@ export function createAppHandler({
 
         if (req.method === 'POST' && url.pathname === '/api/settings') {
           const body = await readJsonBody(req);
-          const updatedUser = ledger.updateUserSettings(userId, {
+          const updatedUser = await ledger.updateUserSettings(userId, {
             homeCurrencyCode: body.homeCurrencyCode,
             budgetCycleStartDay: body.budgetCycleStartDay,
           });
@@ -463,7 +505,7 @@ export function createAppHandler({
         }
 
         if (req.method === 'GET' && url.pathname === '/api/export.csv') {
-          const csv = ledger.exportLedgerCsv(userId);
+          const csv = await ledger.exportLedgerCsv(userId);
           res.writeHead(200, {
             'content-type': 'text/csv; charset=utf-8',
             'content-disposition': `attachment; filename="pocket-ledger-${userId}.csv"`,
@@ -497,20 +539,34 @@ export function createAppHandler({
     }
   };
 
-  return { handler, ledger, demoUserId, secondUserId, personalUserId };
+  return {
+    handler,
+    ledger,
+    ensureReady,
+    get demoUserId() { return demoUserId; },
+    get secondUserId() { return secondUserId; },
+    get personalUserId() { return personalUserId; },
+  };
 }
 
 export function createAppServer(opts = {}) {
-  const { handler, ledger, demoUserId, secondUserId, personalUserId } = createAppHandler(opts);
-  const server = http.createServer(handler);
-  return { server, handler, ledger, demoUserId, secondUserId, personalUserId };
+  const app = createAppHandler(opts);
+  const server = http.createServer(app.handler);
+  return { server, ...app };
 }
 
 if (process.argv[1] && path.resolve(process.argv[1]) === __filename) {
   const host = process.env.HOST || '127.0.0.1';
   const port = Number(process.env.PORT || 3000);
-  const { server } = createAppServer();
-  server.listen(port, host, () => {
-    console.log(`PocketLedger V1 running at http://${host}:${port}`);
-  });
+  const { server, ensureReady } = createAppServer();
+  ensureReady()
+    .then(() => {
+      server.listen(port, host, () => {
+        console.log(`PocketLedger V1 running at http://${host}:${port}`);
+      });
+    })
+    .catch((err) => {
+      console.error('Failed to initialize PocketLedger:', err);
+      process.exit(1);
+    });
 }
