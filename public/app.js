@@ -23,11 +23,6 @@ document.getElementById('openSettingsBtn').addEventListener('click', () => openM
 document.querySelectorAll('[data-close-modal]').forEach((btn) => {
   btn.addEventListener('click', () => closeModal(btn.dataset.closeModal));
 });
-document.querySelectorAll('.modal-overlay').forEach((overlay) => {
-  overlay.addEventListener('click', (e) => {
-    if (e.target === overlay) closeModal(overlay.id);
-  });
-});
 document.addEventListener('keydown', (e) => {
   if (e.key === 'Escape') closeAllModals();
 });
