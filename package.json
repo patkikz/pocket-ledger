@@ -3,6 +3,9 @@
   "version": "1.0.0",
   "description": "ACID integer-minor-unit budget & expense tracker with sub-5-second mobile keypad entry and desktop reconciliation",
   "type": "module",
+  "engines": {
+    "node": ">=24.0.0"
+  },
   "scripts": {
     "test": "node --test tests/*.test.mjs",
     "start": "node src/server.mjs"
