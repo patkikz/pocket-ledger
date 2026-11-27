@@ -128,3 +128,26 @@ export async function readErrorMessage(res, fallbackMsg) {
   const data = await res.json().catch(() => ({}));
   return data.error || fallbackMsg;
 }
+
+export function applyTheme(theme = 'system') {
+  const mode = theme === 'light' || theme === 'dark' ? theme : 'system';
+  try {
+    localStorage.setItem('pl_theme', mode);
+  } catch {
+    // ignore storage errors in restricted contexts
+  }
+  const resolved = mode === 'system'
+    ? (window.matchMedia?.('(prefers-color-scheme: light)')?.matches ? 'light' : 'dark')
+    : mode;
+  document.documentElement.dataset.theme = resolved;
+}
+
+export function getUserInitials(user) {
+  const source = (user?.displayName || user?.email || '?').trim();
+  if (!source) return '?';
+  const parts = source.split(/[\s@._-]+/).filter(Boolean);
+  if (parts.length >= 2) {
+    return (parts[0][0] + parts[1][0]).toUpperCase();
+  }
+  return source.slice(0, 2).toUpperCase();
+}

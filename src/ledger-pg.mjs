@@ -1,6 +1,7 @@
 import pg from 'pg';
 import crypto from 'node:crypto';
 import { AsyncLocalStorage } from 'node:async_hooks';
+import { DEMO_EMAILS, VALID_AVATAR_COLORS, VALID_THEMES } from './ledger.mjs';
 
 const { Pool } = pg;
 
@@ -172,6 +173,10 @@ export function createPostgresLedger(connectionString, { pool: injectedPool } = 
       `CREATE TABLE IF NOT EXISTS users (
         id TEXT PRIMARY KEY,
         email TEXT NOT NULL UNIQUE,
+        display_name TEXT,
+        avatar_color TEXT NOT NULL DEFAULT '#6366f1',
+        theme TEXT NOT NULL DEFAULT 'system',
+        default_account_id TEXT,
         home_currency_code TEXT NOT NULL DEFAULT 'USD',
         budget_cycle_start_day INTEGER NOT NULL DEFAULT 1 CHECK (budget_cycle_start_day BETWEEN 1 AND 28),
         last_used_account_id TEXT,
@@ -250,6 +255,10 @@ export function createPostgresLedger(connectionString, { pool: injectedPool } = 
       `CREATE INDEX IF NOT EXISTS idx_transactions_user_date ON transactions(user_id, occurred_on)`,
       `CREATE INDEX IF NOT EXISTS idx_ledger_entries_account ON ledger_entries(user_id, account_id, voided_at)`,
       `CREATE INDEX IF NOT EXISTS idx_sessions_user ON sessions(user_id)`,
+      `ALTER TABLE users ADD COLUMN IF NOT EXISTS display_name TEXT`,
+      `ALTER TABLE users ADD COLUMN IF NOT EXISTS avatar_color TEXT NOT NULL DEFAULT '#6366f1'`,
+      `ALTER TABLE users ADD COLUMN IF NOT EXISTS theme TEXT NOT NULL DEFAULT 'system'`,
+      `ALTER TABLE users ADD COLUMN IF NOT EXISTS default_account_id TEXT`,
     ];
 
     for (const sql of statements) {
@@ -294,6 +303,10 @@ export function createPostgresLedger(connectionString, { pool: injectedPool } = 
     return {
       id: u.id,
       email: u.email,
+      displayName: u.display_name ?? null,
+      avatarColor: u.avatar_color || '#6366f1',
+      theme: u.theme || 'system',
+      defaultAccountId: u.default_account_id ?? null,
       homeCurrencyCode: u.home_currency_code,
       budgetCycleStartDay: Number(u.budget_cycle_start_day),
       lastUsedAccountId: u.last_used_account_id,
@@ -414,18 +427,116 @@ export function createPostgresLedger(connectionString, { pool: injectedPool } = 
     return (res.rowCount || 0) > 0;
   }
 
-  async function updateUserSettings(userId, { homeCurrencyCode, budgetCycleStartDay }) {
+  async function updateUserProfile(userId, {
+    displayName,
+    avatarColor,
+    theme,
+    defaultAccountId,
+    homeCurrencyCode,
+    budgetCycleStartDay,
+  } = {}) {
     const user = await getUser(userId);
     if (!user) throw new Error('User not found');
+
+    let nextDisplayName = user.displayName;
+    if (displayName !== undefined) {
+      if (displayName === null) {
+        nextDisplayName = null;
+      } else {
+        if (typeof displayName !== 'string') {
+          throw new TypeError('displayName must be a string');
+        }
+        const trimmed = displayName.trim();
+        if (trimmed.length > 60) {
+          throw new RangeError('displayName must be 60 characters or fewer');
+        }
+        nextDisplayName = trimmed.length > 0 ? trimmed : null;
+      }
+    }
+
+    let nextAvatarColor = user.avatarColor;
+    if (avatarColor !== undefined) {
+      if (typeof avatarColor !== 'string' || !VALID_AVATAR_COLORS.has(avatarColor.toLowerCase())) {
+        throw new RangeError('Invalid avatarColor');
+      }
+      nextAvatarColor = avatarColor.toLowerCase();
+    }
+
+    let nextTheme = user.theme;
+    if (theme !== undefined) {
+      if (typeof theme !== 'string' || !VALID_THEMES.has(theme)) {
+        throw new RangeError('theme must be system, dark, or light');
+      }
+      nextTheme = theme;
+    }
+
+    let nextDefaultAccountId = user.defaultAccountId;
+    if (defaultAccountId !== undefined) {
+      if (defaultAccountId === null || defaultAccountId === '') {
+        nextDefaultAccountId = null;
+      } else {
+        const acc = await requireOwnedAccount(userId, defaultAccountId, 'Default account');
+        if (acc.is_archived) {
+          throw new RangeError('Default account cannot be archived');
+        }
+        nextDefaultAccountId = acc.id;
+      }
+    }
+
     const nextCurrency = homeCurrencyCode ? homeCurrencyCode.toUpperCase() : user.homeCurrencyCode;
     const nextStartDay = budgetCycleStartDay !== undefined ? Number(budgetCycleStartDay) : user.budgetCycleStartDay;
     if (!Number.isInteger(nextStartDay) || nextStartDay < 1 || nextStartDay > 28) {
       throw new RangeError('budgetCycleStartDay must be an integer between 1 and 28');
     }
+
     await query(`
-      UPDATE users SET home_currency_code = $1, budget_cycle_start_day = $2 WHERE id = $3
-    `, [nextCurrency, nextStartDay, userId]);
+      UPDATE users
+      SET display_name = $1, avatar_color = $2, theme = $3, default_account_id = $4,
+          home_currency_code = $5, budget_cycle_start_day = $6
+      WHERE id = $7
+    `, [
+      nextDisplayName,
+      nextAvatarColor,
+      nextTheme,
+      nextDefaultAccountId,
+      nextCurrency,
+      nextStartDay,
+      userId,
+    ]);
     return getUser(userId);
+  }
+
+  async function updateUserSettings(userId, { homeCurrencyCode, budgetCycleStartDay }) {
+    return updateUserProfile(userId, { homeCurrencyCode, budgetCycleStartDay });
+  }
+
+  async function changePassword(userId, { currentPassword, newPassword, currentSessionToken = null } = {}) {
+    const row = await queryOne(`SELECT id, email, password_hash FROM users WHERE id = $1`, [userId]);
+    if (!row) throw new Error('User not found');
+    if (DEMO_EMAILS.has(String(row.email).toLowerCase())) {
+      const err = new Error('Demo accounts cannot change password');
+      err.statusCode = 403;
+      throw err;
+    }
+    if (!row.password_hash || !verifyPassword(currentPassword, row.password_hash)) {
+      const err = new Error('Current password is incorrect');
+      err.statusCode = 400;
+      throw err;
+    }
+    if (typeof newPassword !== 'string' || newPassword.length < 8) {
+      throw new RangeError('New password must be at least 8 characters long');
+    }
+    const nextHash = hashPassword(newPassword);
+    await runInTransaction(async () => {
+      await query(`UPDATE users SET password_hash = $1 WHERE id = $2`, [nextHash, userId]);
+      if (currentSessionToken && typeof currentSessionToken === 'string') {
+        const currentHash = hashSessionToken(currentSessionToken);
+        await query(`DELETE FROM sessions WHERE user_id = $1 AND token_hash != $2`, [userId, currentHash]);
+      } else {
+        await query(`DELETE FROM sessions WHERE user_id = $1`, [userId]);
+      }
+    });
+    return true;
   }
 
   async function getAccount(userId, accountId) {
@@ -1319,7 +1430,9 @@ export function createPostgresLedger(connectionString, { pool: injectedPool } = 
     renewSessionIfNeeded,
     deleteSessionByToken,
     getUser,
+    updateUserProfile,
     updateUserSettings,
+    changePassword,
     createAccount,
     getAccount,
     listAccounts,

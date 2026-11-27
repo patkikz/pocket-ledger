@@ -1,4 +1,5 @@
 import { state, formatMoney, showToast, apiFetch, handleActionError } from './state.js';
+import { renderProfile } from './profile.js';
 
 let onActivityInvalidate = null;
 
@@ -76,9 +77,7 @@ export function renderAll() {
   if (!d) return;
 
   document.getElementById('cycleWindowLabel').textContent = `${d.cycleStart} to ${d.cycleEnd}`;
-  document.getElementById('settingsUserEmail').textContent = d.user.email;
-  document.getElementById('cycleStartDaySelect').value = String(d.user.budgetCycleStartDay);
-  document.getElementById('currencySelect').value = d.user.homeCurrencyCode;
+  renderProfile(d.user, d.accounts);
   document.getElementById('csvExportLink').href = '/api/export.csv';
 
   document.getElementById('emptyAccountCallout').classList.toggle('hidden', d.accounts.length > 0);
@@ -252,9 +251,12 @@ export async function fetchDashboard() {
   state.user = data.user;
   state.currencyCode = data.user.homeCurrencyCode;
 
+  const activeAccountIds = new Set(data.accounts.filter((a) => !a.isArchived).map((a) => a.id));
   const accountIds = new Set(data.accounts.map((a) => a.id));
   if (!state.selectedAccountId || !accountIds.has(state.selectedAccountId)) {
-    state.selectedAccountId = data.smartDefaults.accountId;
+    state.selectedAccountId = (data.user.defaultAccountId && activeAccountIds.has(data.user.defaultAccountId))
+      ? data.user.defaultAccountId
+      : data.smartDefaults.accountId;
   }
 
   const otherAcc = data.accounts.find((a) => a.id !== state.selectedAccountId);

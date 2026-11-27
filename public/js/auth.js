@@ -1,5 +1,6 @@
 import { state, getTodayIsoDate, closeAllModals, switchView, setAuthRequiredHandler } from './state.js';
 import { startRealtimeSync, stopRealtimeSync } from './realtime.js';
+import { renderProfile } from './profile.js';
 
 export function showAuthError(msg) {
   const el = document.getElementById('authErrorBanner');
@@ -56,6 +57,8 @@ export function showAuthView({ demoEnabled = state.demoEnabled } = {}) {
   document.getElementById('txNoteInput').value = '';
   document.getElementById('txDateInput').value = state.referenceDate;
   document.getElementById('activitySearchInput').value = '';
+  document.getElementById('profileDropdown')?.classList.add('hidden');
+  document.getElementById('changePasswordForm')?.reset();
   document.querySelectorAll('.filter-pill').forEach((p) => {
     p.classList.toggle('active', p.dataset.filter === 'ALL');
   });
@@ -75,7 +78,7 @@ export function showAppShell(user) {
   if (user?.homeCurrencyCode) {
     state.currencyCode = user.homeCurrencyCode;
   }
-  document.getElementById('settingsUserEmail').textContent = user?.email || '—';
+  renderProfile(user, []);
   document.getElementById('authView').classList.add('hidden');
   document.querySelector('.topbar').classList.remove('hidden');
   document.querySelector('main.container').classList.remove('hidden');

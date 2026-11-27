@@ -1,13 +1,19 @@
-import { state, openModal, closeModal, closeAllModals, switchView, setViewChangeHandler } from './js/state.js';
+import { state, openModal, closeModal, closeAllModals, switchView, setViewChangeHandler, applyTheme } from './js/state.js';
 import { initAuthHandlers, setAuthMode, showAuthError, showAuthView, showAppShell } from './js/auth.js';
 import { fetchDashboard, shiftReferenceMonth } from './js/dashboard.js';
 import { initQuickEntryHandlers } from './js/quick-entry.js';
 import { initAccountHandlers } from './js/accounts.js';
 import { initBudgetAndRecurringHandlers, openAddCategoryModal } from './js/budgets.js';
 import { initActivityHandlers, ensureActivityLoaded } from './js/activity.js';
-import { initSettingsHandlers } from './js/settings.js';
+import { initProfileHandlers } from './js/profile.js';
 import { initRealtimeWakeRefresh } from './js/realtime.js';
 import { initPullToRefresh } from './js/pull-to-refresh.js';
+
+try {
+  applyTheme(localStorage.getItem('pl_theme') || 'system');
+} catch {
+  applyTheme('system');
+}
 
 // Global Navigation & Modal Chrome
 document.querySelectorAll('.nav-tab').forEach((tab) => {
@@ -18,7 +24,6 @@ document.getElementById('prevCycleBtn').addEventListener('click', () => shiftRef
 document.getElementById('nextCycleBtn').addEventListener('click', () => shiftReferenceMonth(1));
 document.getElementById('openQuickEntryBtn').addEventListener('click', () => openModal('quickEntryOverlay'));
 document.getElementById('heroLogBtn').addEventListener('click', () => openModal('quickEntryOverlay'));
-document.getElementById('openSettingsBtn').addEventListener('click', () => openModal('settingsOverlay'));
 
 document.querySelectorAll('[data-close-modal]').forEach((btn) => {
   btn.addEventListener('click', () => closeModal(btn.dataset.closeModal));
@@ -36,7 +41,7 @@ initQuickEntryHandlers({ openAddCategoryModal });
 initAccountHandlers();
 initBudgetAndRecurringHandlers();
 initActivityHandlers();
-initSettingsHandlers();
+initProfileHandlers();
 initRealtimeWakeRefresh();
 initPullToRefresh();
 

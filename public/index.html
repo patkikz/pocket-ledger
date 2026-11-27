@@ -115,12 +115,50 @@
       </div>
 
       <div class="topbar-actions">
-        <button type="button" class="icon-btn" id="openSettingsBtn" aria-label="Preferences">
-          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-            <circle cx="12" cy="12" r="3"/>
-            <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"/>
-          </svg>
-        </button>
+        <div class="profile-menu-wrap">
+          <button type="button" class="profile-chip" id="openProfileBtn" aria-label="Profile menu" aria-expanded="false" aria-haspopup="menu">
+            <span id="topbarAvatar" class="profile-avatar-sm">?</span>
+          </button>
+          <div id="profileDropdown" class="profile-dropdown hidden" role="menu" aria-label="Profile menu">
+            <div class="profile-dropdown-header">
+              <div id="dropdownDisplayName" class="profile-dropdown-name">—</div>
+              <div id="dropdownEmail" class="profile-dropdown-email">—</div>
+            </div>
+            <div class="profile-dropdown-divider"></div>
+            <button type="button" class="profile-dropdown-item" id="openAccountPageBtn" role="menuitem">
+              <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                <path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/>
+                <circle cx="12" cy="7" r="4"/>
+              </svg>
+              <span>Account</span>
+            </button>
+            <div class="profile-dropdown-divider"></div>
+            <div class="profile-dropdown-section-label">Theme</div>
+            <div class="theme-radio-list" id="dropdownThemeList" role="radiogroup" aria-label="Theme">
+              <button type="button" class="theme-radio-item" data-theme-choice="system" role="radio" aria-checked="false">
+                <span class="theme-radio-dot"></span>
+                <span>System</span>
+              </button>
+              <button type="button" class="theme-radio-item" data-theme-choice="dark" role="radio" aria-checked="false">
+                <span class="theme-radio-dot"></span>
+                <span>Dark</span>
+              </button>
+              <button type="button" class="theme-radio-item" data-theme-choice="light" role="radio" aria-checked="false">
+                <span class="theme-radio-dot"></span>
+                <span>Light</span>
+              </button>
+            </div>
+            <div class="profile-dropdown-divider"></div>
+            <button type="button" class="profile-dropdown-item profile-row-danger" id="dropdownLogoutBtn" role="menuitem">
+              <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                <path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/>
+                <polyline points="16 17 21 12 16 7"/>
+                <line x1="21" y1="12" x2="9" y2="12"/>
+              </svg>
+              <span>Sign out</span>
+            </button>
+          </div>
+        </div>
         <button type="button" class="btn-primary" id="openQuickEntryBtn">
           <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
             <line x1="12" y1="5" x2="12" y2="19"/>
@@ -301,6 +339,191 @@
         <button type="button" class="btn-secondary" id="loadMoreTxBtn">Load more</button>
       </div>
       <div id="activityScrollSentinel" class="scroll-sentinel" aria-hidden="true"></div>
+    </section>
+
+    <!-- VIEW 4: ACCOUNT SETTINGS (opened from Avatar Dropdown -> Account) -->
+    <section id="view-profile" class="view-section">
+      <div class="account-topbar">
+        <button type="button" class="account-back-btn" id="backToDashboardBtn">
+          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <line x1="19" y1="12" x2="5" y2="12"/>
+            <polyline points="12 19 5 12 12 5"/>
+          </svg>
+          <span>Back to dashboard</span>
+        </button>
+      </div>
+
+      <div class="account-layout">
+        <aside class="account-sidebar" aria-label="Account settings navigation">
+          <div class="account-sidebar-label">Account Settings</div>
+          <button type="button" class="account-nav-item active" data-account-tab="preferences">Preferences</button>
+          <button type="button" class="account-nav-item" data-account-tab="security">Security</button>
+        </aside>
+
+        <div class="account-content">
+          <!-- PREFERENCES TAB -->
+          <div id="accountTab-preferences" class="account-tab-panel">
+            <div class="account-page-header">
+              <h2 class="account-page-title">Preferences</h2>
+              <p class="account-page-sub">Manage your profile information, budget defaults, and appearance.</p>
+            </div>
+
+            <div class="account-group">
+              <h3 class="account-group-title">Profile information</h3>
+              <form id="profileIdentityForm" class="account-panel">
+                <div class="account-panel-row">
+                  <div class="account-row-meta">
+                    <span class="account-row-label">Avatar</span>
+                    <span class="account-row-hint">Initials badge &amp; accent color</span>
+                  </div>
+                  <div class="account-avatar-picker">
+                    <span id="profileAvatarLg" class="profile-avatar-sm">?</span>
+                    <div class="color-swatch-grid" id="profileColorPicker" role="radiogroup" aria-label="Avatar color">
+                      <button type="button" class="color-swatch" data-color="#6366f1" style="background:#6366f1" aria-label="Indigo"></button>
+                      <button type="button" class="color-swatch" data-color="#10b981" style="background:#10b981" aria-label="Emerald"></button>
+                      <button type="button" class="color-swatch" data-color="#f59e0b" style="background:#f59e0b" aria-label="Amber"></button>
+                      <button type="button" class="color-swatch" data-color="#f43f5e" style="background:#f43f5e" aria-label="Rose"></button>
+                      <button type="button" class="color-swatch" data-color="#38bdf8" style="background:#38bdf8" aria-label="Sky"></button>
+                      <button type="button" class="color-swatch" data-color="#a855f7" style="background:#a855f7" aria-label="Purple"></button>
+                    </div>
+                  </div>
+                </div>
+
+                <div class="account-panel-row">
+                  <div class="account-row-meta">
+                    <label for="profileNameInput" class="account-row-label">Display name</label>
+                    <span class="account-row-hint">Shown in your profile menu</span>
+                  </div>
+                  <input type="text" id="profileNameInput" class="input-field account-row-input" maxlength="60" placeholder="Your name (optional)" />
+                </div>
+
+                <div class="account-panel-row">
+                  <div class="account-row-meta">
+                    <span class="account-row-label">Primary email</span>
+                    <span class="account-row-hint">Used for signing in</span>
+                  </div>
+                  <span id="profileEmail" class="account-row-readonly">—</span>
+                </div>
+
+                <div class="account-panel-footer">
+                  <button type="submit" class="btn-primary btn-sm" id="saveIdentityBtn">Save</button>
+                </div>
+              </form>
+            </div>
+
+            <div class="account-group">
+              <h3 class="account-group-title">Budget &amp; Quick Entry</h3>
+              <div class="account-panel">
+                <div class="account-panel-row">
+                  <div class="account-row-meta">
+                    <label for="currencySelect" class="account-row-label">Home currency</label>
+                    <span class="account-row-hint">Formatting for dashboards &amp; budgets</span>
+                  </div>
+                  <select id="currencySelect" class="input-field account-row-input">
+                    <option value="USD">USD ($)</option>
+                    <option value="PHP">PHP (₱)</option>
+                    <option value="EUR">EUR (€)</option>
+                    <option value="GBP">GBP (£)</option>
+                  </select>
+                </div>
+
+                <div class="account-panel-row">
+                  <div class="account-row-meta">
+                    <label for="cycleStartDaySelect" class="account-row-label">Budget reset day</label>
+                    <span class="account-row-hint">Monthly cycle boundary</span>
+                  </div>
+                  <select id="cycleStartDaySelect" class="input-field account-row-input">
+                    <option value="1">1st of month</option>
+                    <option value="5">5th of month</option>
+                    <option value="10">10th of month</option>
+                    <option value="15">15th of month</option>
+                    <option value="25">25th of month</option>
+                  </select>
+                </div>
+
+                <div class="account-panel-row">
+                  <div class="account-row-meta">
+                    <label for="defaultAccountSelect" class="account-row-label">Default account</label>
+                    <span class="account-row-hint">Pre-selected in Quick Entry</span>
+                  </div>
+                  <select id="defaultAccountSelect" class="input-field account-row-input">
+                    <option value="">Smart default (last used)</option>
+                  </select>
+                </div>
+              </div>
+            </div>
+
+            <div class="account-group">
+              <h3 class="account-group-title">Appearance</h3>
+              <div class="account-panel">
+                <div class="account-panel-row">
+                  <div class="account-row-meta">
+                    <span class="account-row-label">Theme</span>
+                    <span class="account-row-hint">Choose how PocketLedger looks</span>
+                  </div>
+                  <div class="mode-tabs account-theme-tabs" id="themeRadioList" role="radiogroup" aria-label="Appearance theme">
+                    <button type="button" class="tab-btn" data-theme-choice="system" role="radio" aria-checked="false">System</button>
+                    <button type="button" class="tab-btn" data-theme-choice="dark" role="radio" aria-checked="false">Dark</button>
+                    <button type="button" class="tab-btn" data-theme-choice="light" role="radio" aria-checked="false">Light</button>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <!-- SECURITY TAB -->
+          <div id="accountTab-security" class="account-tab-panel hidden">
+            <div class="account-page-header">
+              <h2 class="account-page-title">Security</h2>
+              <p class="account-page-sub">Manage your password, ledger export, and active session.</p>
+            </div>
+
+            <div class="account-group">
+              <h3 class="account-group-title">Password</h3>
+              <form id="changePasswordForm" class="account-panel">
+                <p id="demoPasswordNotice" class="account-demo-notice hidden">Demo accounts cannot change their password.</p>
+                <div id="changePasswordFields">
+                  <div class="account-panel-row">
+                    <label for="currentPasswordInput" class="account-row-label">Current password</label>
+                    <input type="password" id="currentPasswordInput" class="input-field account-row-input" autocomplete="current-password" required />
+                  </div>
+                  <div class="account-panel-row">
+                    <label for="newPasswordInput" class="account-row-label">New password</label>
+                    <input type="password" id="newPasswordInput" class="input-field account-row-input" minlength="8" autocomplete="new-password" placeholder="At least 8 characters" required />
+                  </div>
+                  <div class="account-panel-row">
+                    <label for="confirmPasswordInput" class="account-row-label">Confirm password</label>
+                    <input type="password" id="confirmPasswordInput" class="input-field account-row-input" minlength="8" autocomplete="new-password" required />
+                  </div>
+                  <div class="account-panel-footer">
+                    <button type="submit" class="btn-primary btn-sm" id="savePasswordBtn">Update Password</button>
+                  </div>
+                </div>
+              </form>
+            </div>
+
+            <div class="account-group">
+              <h3 class="account-group-title">Data &amp; Session</h3>
+              <div class="account-panel">
+                <div class="account-panel-row">
+                  <div class="account-row-meta">
+                    <span class="account-row-label">Export ledger</span>
+                    <span class="account-row-hint">Download all entries as CSV</span>
+                  </div>
+                  <a href="/api/export.csv" id="profileCsvExportLink" class="btn-secondary btn-sm" download>Export CSV</a>
+                </div>
+                <div class="account-panel-row">
+                  <div class="account-row-meta">
+                    <span class="account-row-label">Session</span>
+                    <span class="account-row-hint">Sign out of this device</span>
+                  </div>
+                  <button type="button" class="btn-secondary btn-sm profile-row-danger" id="logoutBtn">Sign out</button>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
     </section>
   </main>
 
@@ -577,53 +800,6 @@
         <button type="submit" class="submit-btn">Save Account</button>
         <button type="button" class="btn-danger" id="archiveAccountBtn">Archive Account</button>
       </form>
-    </div>
-  </div>
-
-  <!-- SETTINGS MODAL -->
-  <div id="settingsOverlay" class="modal-overlay hidden" role="dialog" aria-modal="true" aria-labelledby="settingsTitle">
-    <div class="modal-sheet modal-sheet-sm">
-      <div class="modal-header">
-        <h2 id="settingsTitle" class="modal-title">Preferences</h2>
-        <button type="button" class="icon-btn" data-close-modal="settingsOverlay" aria-label="Close">
-          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-            <line x1="18" y1="6" x2="6" y2="18"/>
-            <line x1="6" y1="6" x2="18" y2="18"/>
-          </svg>
-        </button>
-      </div>
-
-      <div class="settings-form">
-        <div class="field-group">
-          <span class="field-label">Signed-in Account</span>
-          <div class="settings-account-row">
-            <span id="settingsUserEmail" class="settings-user-email">—</span>
-            <button type="button" class="btn-secondary btn-logout" id="logoutBtn">Log out</button>
-          </div>
-        </div>
-
-        <div class="field-group">
-          <label for="currencySelect" class="field-label">Home Currency</label>
-          <select id="currencySelect" class="input-field">
-            <option value="USD">USD ($)</option>
-            <option value="PHP">PHP (₱)</option>
-            <option value="EUR">EUR (€)</option>
-            <option value="GBP">GBP (£)</option>
-          </select>
-        </div>
-
-        <div class="field-group">
-          <label for="cycleStartDaySelect" class="field-label">Monthly Budget Reset Day</label>
-          <select id="cycleStartDaySelect" class="input-field">
-            <option value="1">1st of every month</option>
-            <option value="5">5th of every month</option>
-            <option value="10">10th of every month</option>
-            <option value="15">15th of every month (Mid-month pay)</option>
-            <option value="25">25th of every month</option>
-          </select>
-          <p class="field-help">Budgets reset to zero on this day each month.</p>
-        </div>
-      </div>
     </div>
   </div>
 

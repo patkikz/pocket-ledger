@@ -504,6 +504,30 @@ export function createAppHandler({
           return replyJson(200, { user: updatedUser });
         }
 
+        if (req.method === 'PATCH' && url.pathname === '/api/profile') {
+          const body = await readJsonBody(req);
+          const updatedUser = await ledger.updateUserProfile(userId, {
+            ...(body.displayName !== undefined ? { displayName: body.displayName } : {}),
+            ...(body.avatarColor !== undefined ? { avatarColor: body.avatarColor } : {}),
+            ...(body.theme !== undefined ? { theme: body.theme } : {}),
+            ...(body.defaultAccountId !== undefined ? { defaultAccountId: body.defaultAccountId } : {}),
+            ...(body.homeCurrencyCode !== undefined ? { homeCurrencyCode: body.homeCurrencyCode } : {}),
+            ...(body.budgetCycleStartDay !== undefined ? { budgetCycleStartDay: body.budgetCycleStartDay } : {}),
+          });
+          notifyUser(userId, 'profile_updated');
+          return replyJson(200, { user: updatedUser });
+        }
+
+        if (req.method === 'POST' && url.pathname === '/api/auth/change-password') {
+          const body = await readJsonBody(req);
+          await ledger.changePassword(userId, {
+            currentPassword: body.currentPassword,
+            newPassword: body.newPassword,
+            currentSessionToken: rawToken,
+          });
+          return replyJson(200, { ok: true });
+        }
+
         if (req.method === 'GET' && url.pathname === '/api/export.csv') {
           const csv = await ledger.exportLedgerCsv(userId);
           res.writeHead(200, {
@@ -535,7 +559,8 @@ export function createAppHandler({
       });
       res.end(fs.readFileSync(filePath));
     } catch (err) {
-      sendJson(res, 400, { error: err.message || 'Bad request' });
+      const status = err?.statusCode && Number.isInteger(err.statusCode) ? err.statusCode : 400;
+      sendJson(res, status, { error: err.message || 'Bad request' });
     }
   };
 

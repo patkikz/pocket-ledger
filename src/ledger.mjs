@@ -7,6 +7,9 @@ const VALID_ACCOUNT_TYPES = new Set(['CASH_CHECKING', 'SAVINGS', 'CREDIT_CARD'])
 const VALID_CATEGORY_KINDS = new Set(['EXPENSE', 'INCOME']);
 const VALID_TX_TYPES = new Set(['EXPENSE', 'REFUND', 'INCOME', 'TRANSFER', 'ADJUSTMENT']);
 const VALID_FREQUENCIES = new Set(['MONTHLY', 'WEEKLY', 'YEARLY']);
+export const DEMO_EMAILS = new Set(['patrick@pocketledger.app', 'alex.isolated@pocketledger.app']);
+export const VALID_AVATAR_COLORS = new Set(['#6366f1', '#10b981', '#f59e0b', '#f43f5e', '#38bdf8', '#a855f7']);
+export const VALID_THEMES = new Set(['system', 'dark', 'light']);
 const DEFAULT_SESSION_TTL_MS = 30 * 24 * 60 * 60 * 1000;
 const STARTER_CATEGORIES = [
   { name: 'Groceries', kind: 'EXPENSE', monthlyCapMinor: 50000, icon: 'shopping-bag', color: '#10b981' },
@@ -79,6 +82,10 @@ export function createLedgerDb(dbPath = ':memory:') {
     CREATE TABLE IF NOT EXISTS users (
       id TEXT PRIMARY KEY,
       email TEXT NOT NULL UNIQUE,
+      display_name TEXT,
+      avatar_color TEXT NOT NULL DEFAULT '#6366f1',
+      theme TEXT NOT NULL DEFAULT 'system',
+      default_account_id TEXT,
       home_currency_code TEXT NOT NULL DEFAULT 'USD',
       budget_cycle_start_day INTEGER NOT NULL DEFAULT 1 CHECK (budget_cycle_start_day BETWEEN 1 AND 28),
       last_used_account_id TEXT,
@@ -170,6 +177,18 @@ export function createLedgerDb(dbPath = ':memory:') {
   const userColumns = db.prepare(`PRAGMA table_info(users)`).all();
   if (!userColumns.some((col) => col.name === 'password_hash')) {
     db.exec(`ALTER TABLE users ADD COLUMN password_hash TEXT`);
+  }
+  if (!userColumns.some((col) => col.name === 'display_name')) {
+    db.exec(`ALTER TABLE users ADD COLUMN display_name TEXT`);
+  }
+  if (!userColumns.some((col) => col.name === 'avatar_color')) {
+    db.exec(`ALTER TABLE users ADD COLUMN avatar_color TEXT NOT NULL DEFAULT '#6366f1'`);
+  }
+  if (!userColumns.some((col) => col.name === 'theme')) {
+    db.exec(`ALTER TABLE users ADD COLUMN theme TEXT NOT NULL DEFAULT 'system'`);
+  }
+  if (!userColumns.some((col) => col.name === 'default_account_id')) {
+    db.exec(`ALTER TABLE users ADD COLUMN default_account_id TEXT`);
   }
 
   let txDepth = 0;
@@ -406,6 +425,10 @@ export function createLedgerDb(dbPath = ':memory:') {
     return {
       id: u.id,
       email: u.email,
+      displayName: u.display_name ?? null,
+      avatarColor: u.avatar_color || '#6366f1',
+      theme: u.theme || 'system',
+      defaultAccountId: u.default_account_id ?? null,
       homeCurrencyCode: u.home_currency_code,
       budgetCycleStartDay: Number(u.budget_cycle_start_day),
       lastUsedAccountId: u.last_used_account_id,
@@ -413,18 +436,116 @@ export function createLedgerDb(dbPath = ':memory:') {
     };
   }
 
-  function updateUserSettings(userId, { homeCurrencyCode, budgetCycleStartDay }) {
+  function updateUserProfile(userId, {
+    displayName,
+    avatarColor,
+    theme,
+    defaultAccountId,
+    homeCurrencyCode,
+    budgetCycleStartDay,
+  } = {}) {
     const user = getUser(userId);
     if (!user) throw new Error('User not found');
+
+    let nextDisplayName = user.displayName;
+    if (displayName !== undefined) {
+      if (displayName === null) {
+        nextDisplayName = null;
+      } else {
+        if (typeof displayName !== 'string') {
+          throw new TypeError('displayName must be a string');
+        }
+        const trimmed = displayName.trim();
+        if (trimmed.length > 60) {
+          throw new RangeError('displayName must be 60 characters or fewer');
+        }
+        nextDisplayName = trimmed.length > 0 ? trimmed : null;
+      }
+    }
+
+    let nextAvatarColor = user.avatarColor;
+    if (avatarColor !== undefined) {
+      if (typeof avatarColor !== 'string' || !VALID_AVATAR_COLORS.has(avatarColor.toLowerCase())) {
+        throw new RangeError('Invalid avatarColor');
+      }
+      nextAvatarColor = avatarColor.toLowerCase();
+    }
+
+    let nextTheme = user.theme;
+    if (theme !== undefined) {
+      if (typeof theme !== 'string' || !VALID_THEMES.has(theme)) {
+        throw new RangeError('theme must be system, dark, or light');
+      }
+      nextTheme = theme;
+    }
+
+    let nextDefaultAccountId = user.defaultAccountId;
+    if (defaultAccountId !== undefined) {
+      if (defaultAccountId === null || defaultAccountId === '') {
+        nextDefaultAccountId = null;
+      } else {
+        const acc = requireOwnedAccount(userId, defaultAccountId, 'Default account');
+        if (acc.is_archived) {
+          throw new RangeError('Default account cannot be archived');
+        }
+        nextDefaultAccountId = acc.id;
+      }
+    }
+
     const nextCurrency = homeCurrencyCode ? homeCurrencyCode.toUpperCase() : user.homeCurrencyCode;
     const nextStartDay = budgetCycleStartDay !== undefined ? Number(budgetCycleStartDay) : user.budgetCycleStartDay;
     if (!Number.isInteger(nextStartDay) || nextStartDay < 1 || nextStartDay > 28) {
       throw new RangeError('budgetCycleStartDay must be an integer between 1 and 28');
     }
+
     db.prepare(`
-      UPDATE users SET home_currency_code = ?, budget_cycle_start_day = ? WHERE id = ?
-    `).run(nextCurrency, nextStartDay, userId);
+      UPDATE users
+      SET display_name = ?, avatar_color = ?, theme = ?, default_account_id = ?,
+          home_currency_code = ?, budget_cycle_start_day = ?
+      WHERE id = ?
+    `).run(
+      nextDisplayName,
+      nextAvatarColor,
+      nextTheme,
+      nextDefaultAccountId,
+      nextCurrency,
+      nextStartDay,
+      userId
+    );
     return getUser(userId);
+  }
+
+  function updateUserSettings(userId, { homeCurrencyCode, budgetCycleStartDay }) {
+    return updateUserProfile(userId, { homeCurrencyCode, budgetCycleStartDay });
+  }
+
+  function changePassword(userId, { currentPassword, newPassword, currentSessionToken = null } = {}) {
+    const row = db.prepare(`SELECT id, email, password_hash FROM users WHERE id = ?`).get(userId);
+    if (!row) throw new Error('User not found');
+    if (DEMO_EMAILS.has(String(row.email).toLowerCase())) {
+      const err = new Error('Demo accounts cannot change password');
+      err.statusCode = 403;
+      throw err;
+    }
+    if (!row.password_hash || !verifyPassword(currentPassword, row.password_hash)) {
+      const err = new Error('Current password is incorrect');
+      err.statusCode = 400;
+      throw err;
+    }
+    if (typeof newPassword !== 'string' || newPassword.length < 8) {
+      throw new RangeError('New password must be at least 8 characters long');
+    }
+    const nextHash = hashPassword(newPassword);
+    runInTransaction(() => {
+      db.prepare(`UPDATE users SET password_hash = ? WHERE id = ?`).run(nextHash, userId);
+      if (currentSessionToken && typeof currentSessionToken === 'string') {
+        const currentHash = hashSessionToken(currentSessionToken);
+        db.prepare(`DELETE FROM sessions WHERE user_id = ? AND token_hash != ?`).run(userId, currentHash);
+      } else {
+        db.prepare(`DELETE FROM sessions WHERE user_id = ?`).run(userId);
+      }
+    });
+    return true;
   }
 
   function createAccount(userId, {
@@ -1446,7 +1567,9 @@ export function createLedgerDb(dbPath = ':memory:') {
     renewSessionIfNeeded,
     deleteSessionByToken,
     getUser,
+    updateUserProfile,
     updateUserSettings,
+    changePassword,
     createAccount,
     getAccount,
     listAccounts,
