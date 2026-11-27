@@ -25,6 +25,16 @@ document.getElementById('nextCycleBtn').addEventListener('click', () => shiftRef
 document.getElementById('openQuickEntryBtn').addEventListener('click', () => openModal('quickEntryOverlay'));
 document.getElementById('heroLogBtn').addEventListener('click', () => openModal('quickEntryOverlay'));
 
+const scrollTopBtn = document.getElementById('scrollTopBtn');
+if (scrollTopBtn) {
+  window.addEventListener('scroll', () => {
+    scrollTopBtn.classList.toggle('hidden', window.scrollY <= 240);
+  }, { passive: true });
+  scrollTopBtn.addEventListener('click', () => {
+    window.scrollTo({ top: 0, behavior: 'smooth' });
+  });
+}
+
 document.querySelectorAll('[data-close-modal]').forEach((btn) => {
   btn.addEventListener('click', () => closeModal(btn.dataset.closeModal));
 });

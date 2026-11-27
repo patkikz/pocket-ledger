@@ -28,14 +28,28 @@ export function updateKeypadReadout() {
   document.getElementById('submitTxBtn').querySelector('span').textContent = `${labels[state.txType]}${amountLabel}`;
 }
 
-export function renderTxItems(transactions, containerEl, { showUndo = false, emptyMsg = 'No transactions yet.' } = {}) {
+function formatDateHeading(isoDate) {
+  if (!isoDate) return '';
+  const [y, m, d] = isoDate.split('-').map(Number);
+  if (!y || !m || !d) return isoDate;
+  const dt = new Date(Date.UTC(y, m - 1, d));
+  return dt.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric', timeZone: 'UTC' });
+}
+
+export function renderTxItems(transactions, containerEl, { showUndo = false, groupByDate = false, emptyMsg = 'No transactions yet.' } = {}) {
   if (transactions.length === 0) {
     containerEl.innerHTML = `<div class="tx-item"><span class="tx-sub">${emptyMsg}</span></div>`;
     return;
   }
 
+  let lastDate = null;
   containerEl.innerHTML = transactions
     .map((t) => {
+      const dateHeader = groupByDate && t.occurredOn !== lastDate
+        ? `<div class="tx-date-header">${formatDateHeading(t.occurredOn)}</div>`
+        : '';
+      lastDate = t.occurredOn;
+
       const isVoid = Boolean(t.voidedAt);
       const isPositive = t.type === 'INCOME' || t.type === 'REFUND';
       const sign = t.type === 'EXPENSE' ? '−' : isPositive ? '+' : '';
@@ -45,27 +59,25 @@ export function renderTxItems(transactions, containerEl, { showUndo = false, emp
         t.type === 'TRANSFER'
           ? `${t.accountName} → ${t.transferDestinationAccountName}`
           : `${t.accountName}${t.categoryName ? ` • ${t.categoryName}` : ''}`;
+      const subText = groupByDate ? accountInfo : `${t.occurredOn} • ${accountInfo}`;
+      const actionsHtml = showUndo
+        ? `<div class="tx-actions">
+            ${!isVoid && t.type !== 'ADJUSTMENT' ? `<button type="button" class="btn-undo-sm" data-edit-tx="${t.id}">Edit</button>` : ''}
+            ${!isVoid ? `<button type="button" class="btn-undo-sm" data-void-tx="${t.id}">Undo</button>` : ''}
+          </div>`
+        : '';
 
-      return `<div class="tx-item ${isVoid ? 'voided' : ''}">
+      return `${dateHeader}<div class="tx-item ${isVoid ? 'voided' : ''}">
         <div class="tx-left">
           <span class="tx-dot" style="background:${dotColor};" aria-hidden="true"></span>
           <div style="min-width:0;">
             <div class="tx-title">${title}</div>
-            <div class="tx-sub">${t.occurredOn} • ${accountInfo}</div>
+            <div class="tx-sub">${subText}</div>
           </div>
         </div>
         <div class="tx-right">
           <span class="tx-amount ${isPositive ? 'positive' : ''}">${sign}${formatMoney(t.amountMinor)}</span>
-          ${
-            showUndo && !isVoid && t.type !== 'ADJUSTMENT'
-              ? `<button type="button" class="btn-undo-sm" data-edit-tx="${t.id}">Edit</button>`
-              : ''
-          }
-          ${
-            showUndo && !isVoid
-              ? `<button type="button" class="btn-undo-sm" data-void-tx="${t.id}">Undo</button>`
-              : ''
-          }
+          ${actionsHtml}
         </div>
       </div>`;
     })
@@ -167,7 +179,28 @@ export function renderAll() {
   const activeRecent = d.recentTransactions.filter((t) => !t.voidedAt).slice(0, 5);
   renderTxItems(activeRecent, document.getElementById('recentTxList'), { showUndo: false });
 
-  document.getElementById('netLiquidityLabel').textContent = `Total Net Liquidity: ${formatMoney(d.netLiquidityMinor)}`;
+  document.getElementById('netLiquidityLabel').textContent = formatMoney(d.netLiquidityMinor);
+  const cashAndSavingsMinor = d.accounts
+    .filter((a) => a.type !== 'CREDIT_CARD')
+    .reduce((sum, a) => sum + a.cachedBalanceMinor, 0);
+  const cardDebtMinor = d.accounts
+    .filter((a) => a.type === 'CREDIT_CARD')
+    .reduce((sum, a) => sum + Math.max(0, -a.cachedBalanceMinor), 0);
+  const summaryMeta = document.getElementById('accountsSummaryMeta');
+  if (summaryMeta) {
+    summaryMeta.innerHTML = `
+      <span class="accounts-meta-pill"><strong>${d.accounts.length}</strong> ${d.accounts.length === 1 ? 'account' : 'accounts'}</span>
+      <span class="accounts-meta-pill">Cash &amp; Savings: <strong>${formatMoney(cashAndSavingsMinor)}</strong></span>
+      ${cardDebtMinor > 0 ? `<span class="accounts-meta-pill accounts-meta-debt">Card Debt: <strong>${formatMoney(cardDebtMinor)}</strong></span>` : ''}
+    `;
+  }
+
+  const ACCOUNT_ICONS = {
+    CASH_CHECKING: '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M19 7V4a1 1 0 0 0-1-1H5a2 2 0 0 0 0 4h15a1 1 0 0 1 1 1v4h-3a2 2 0 0 0 0 4h3a1 1 0 0 0 1-1v-2a1 1 0 0 0-1-1"/><path d="M3 5v14a2 2 0 0 0 2 2h15a1 1 0 0 0 1-1v-4"/></svg>',
+    SAVINGS: '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="11" width="18" height="11" rx="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>',
+    CREDIT_CARD: '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="2" y="5" width="20" height="14" rx="2"/><line x1="2" y1="10" x2="22" y2="10"/></svg>',
+  };
+
   const accountsGrid = document.getElementById('accountsGrid');
   if (d.accounts.length === 0) {
     accountsGrid.innerHTML = `<div class="account-card"><p class="tx-sub">No accounts yet. Click "+ Add Account" to get started.</p></div>`;
@@ -176,17 +209,31 @@ export function renderAll() {
       .map((a) => {
         const typeLabel =
           a.type === 'CASH_CHECKING' ? 'Cash / Checking' : a.type === 'SAVINGS' ? 'Savings' : 'Credit Card';
-        return `<div class="account-card">
+        const toneClass =
+          a.type === 'CASH_CHECKING' ? 'tone-emerald' : a.type === 'SAVINGS' ? 'tone-sky' : 'tone-amber';
+        const isDefault = d.user?.defaultAccountId === a.id;
+        const safeLabel = a.type === 'CREDIT_CARD'
+          ? 'Credit line'
+          : (a.includeInSafeToSpend ? 'In Safe-to-Spend' : 'Excluded from Safe-to-Spend');
+        return `<div class="account-card ${toneClass}">
           <div class="account-header">
-            <span class="account-name">${a.name}</span>
-            <span class="account-type">${typeLabel}</span>
+            <div class="account-title-wrap">
+              <span class="account-type-icon ${toneClass}">${ACCOUNT_ICONS[a.type] || ACCOUNT_ICONS.CASH_CHECKING}</span>
+              <div>
+                <div class="account-name-row">
+                  <span class="account-name">${a.name}</span>
+                  ${isDefault ? '<span class="account-default-badge">Default</span>' : ''}
+                </div>
+                <span class="account-type-sub">${typeLabel} · ${safeLabel}</span>
+              </div>
+            </div>
           </div>
           <div class="account-balance ${a.cachedBalanceMinor < 0 ? 'negative' : ''}">${formatMoney(a.cachedBalanceMinor)}</div>
           <div class="account-actions">
-            <button type="button" class="btn-secondary" style="justify-content:center;" data-reconcile-acc="${a.id}" data-acc-name="${a.name}" data-acc-bal="${a.cachedBalanceMinor}">
+            <button type="button" class="btn-secondary btn-sm account-reconcile-btn" data-reconcile-acc="${a.id}" data-acc-name="${a.name}" data-acc-bal="${a.cachedBalanceMinor}">
               Update Balance
             </button>
-            <button type="button" class="btn-secondary" data-edit-acc="${a.id}">
+            <button type="button" class="btn-secondary btn-sm" data-edit-acc="${a.id}">
               Edit
             </button>
           </div>

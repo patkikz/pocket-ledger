@@ -542,7 +542,18 @@ export function createAppHandler({
       }
 
       // Static file server & SPA route fallback for PWA frontend
-      const SPA_ROUTES = new Set(['/', '/overview', '/accounts', '/activity', '/account', '/account/preferences', '/account/security']);
+      const SPA_ROUTES = new Set([
+        '/',
+        '/overview',
+        '/accounts',
+        '/activity',
+        '/profile',
+        '/profile/preferences',
+        '/profile/security',
+        '/account',
+        '/account/preferences',
+        '/account/security',
+      ]);
       const safePath = SPA_ROUTES.has(url.pathname) ? '/index.html' : url.pathname;
       const filePath = path.join(PUBLIC_DIR, path.normalize(safePath));
       if (!filePath.startsWith(PUBLIC_DIR) || !fs.existsSync(filePath) || fs.statSync(filePath).isDirectory()) {

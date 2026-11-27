@@ -77,7 +77,15 @@ export function formatMoney(amountMinor, currencyCode = state.currencyCode) {
 
 export function showToast(msg, isError = false) {
   const toast = document.getElementById('toastBanner');
-  toast.textContent = msg;
+  const iconSvg = isError
+    ? '<svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>'
+    : '<svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/></svg>';
+  toast.innerHTML = `<span class="toast-icon">${iconSvg}</span><span class="toast-msg"></span><button type="button" class="toast-close" aria-label="Dismiss"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg></button>`;
+  toast.querySelector('.toast-msg').textContent = msg;
+  toast.querySelector('.toast-close').addEventListener('click', () => {
+    clearTimeout(showToast._timer);
+    toast.classList.add('hidden');
+  });
   toast.classList.toggle('error', isError);
   toast.classList.remove('hidden');
   clearTimeout(showToast._timer);
@@ -90,15 +98,17 @@ export function parseRoute(pathname = window.location.pathname) {
   const clean = (pathname || '/').replace(/\/+$/, '') || '/';
   if (clean === '/accounts') return { viewName: 'accounts', accountTab: 'preferences' };
   if (clean === '/activity') return { viewName: 'history', accountTab: 'preferences' };
-  if (clean === '/account/security') return { viewName: 'profile', accountTab: 'security' };
-  if (clean === '/account' || clean === '/account/preferences') return { viewName: 'profile', accountTab: 'preferences' };
+  if (clean === '/profile/security' || clean === '/account/security') return { viewName: 'profile', accountTab: 'security' };
+  if (clean === '/profile' || clean === '/profile/preferences' || clean === '/account' || clean === '/account/preferences') {
+    return { viewName: 'profile', accountTab: 'preferences' };
+  }
   return { viewName: 'home', accountTab: 'preferences' };
 }
 
 export function buildRoutePath(viewName, accountTab = 'preferences') {
   if (viewName === 'accounts') return '/accounts';
   if (viewName === 'history') return '/activity';
-  if (viewName === 'profile') return accountTab === 'security' ? '/account/security' : '/account';
+  if (viewName === 'profile') return accountTab === 'security' ? '/profile/security' : '/profile';
   return '/';
 }
 

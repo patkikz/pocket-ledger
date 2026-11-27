@@ -9,6 +9,7 @@ import {
   readErrorMessage,
 } from './state.js';
 import { fetchDashboard, renderTxItems, setActivityInvalidateHandler } from './dashboard.js';
+import { confirmDialog } from './confirm.js';
 
 const PAGE_SIZE = 25;
 
@@ -33,7 +34,7 @@ function renderActivityList() {
     ? 'No matching transactions found.'
     : 'No transactions yet.';
 
-  renderTxItems(state.activity.items, listEl, { showUndo: true, emptyMsg });
+  renderTxItems(state.activity.items, listEl, { showUndo: true, groupByDate: true, emptyMsg });
   loadMoreWrap.classList.toggle('hidden', !state.activity.hasMore);
 }
 
@@ -139,6 +140,14 @@ export function initActivityHandlers() {
 
     const btn = e.target.closest('[data-void-tx]');
     if (!btn) return;
+    const confirmed = await confirmDialog({
+      title: 'Undo this transaction?',
+      message: 'This will void the entry and recalculate your account balances.',
+      confirmText: 'Yes, undo',
+      cancelText: 'Cancel',
+      tone: 'danger',
+    });
+    if (!confirmed) return;
     await withButtonLoading(btn, '…', async () => {
       try {
         const res = await apiFetch(`/api/transactions/${btn.dataset.voidTx}/void`, {
@@ -190,6 +199,14 @@ export function initActivityHandlers() {
   document.getElementById('voidTxFromModalBtn').addEventListener('click', async (e) => {
     const txId = document.getElementById('editTxId').value;
     if (!txId) return;
+    const confirmed = await confirmDialog({
+      title: 'Remove this transaction?',
+      message: 'This will void the entry and recalculate your account balances.',
+      confirmText: 'Yes, remove',
+      cancelText: 'Cancel',
+      tone: 'danger',
+    });
+    if (!confirmed) return;
     await withButtonLoading(e.currentTarget, 'Removing…', async () => {
       try {
         const res = await apiFetch(`/api/transactions/${txId}/void`, { method: 'POST' });

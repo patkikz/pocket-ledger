@@ -303,6 +303,7 @@ test('Frontend Profile dropdown, Account settings view markup, and service worke
   assert.match(html, /id="backToDashboardBtn"/);
   assert.match(html, /id="view-profile"/);
   assert.match(html, /id="openProfileBtn"/);
+  assert.match(html, /id="confirmOverlay"/);
   assert.equal(html.includes('id="settingsOverlay"'), false);
   for (const id of ['authPassword', 'currentPasswordInput', 'newPasswordInput', 'confirmPasswordInput']) {
     assert.match(html, new RegExp(`data-toggle-password="${id}"`));
@@ -310,12 +311,13 @@ test('Frontend Profile dropdown, Account settings view markup, and service worke
 
   const sw = fs.readFileSync(path.resolve('public/sw.js'), 'utf8');
   assert.match(sw, /'\/js\/profile\.js'/);
+  assert.match(sw, /'\/js\/confirm\.js'/);
 });
 
-test('SPA routes (/accounts, /activity, /account, /account/security) serve index.html for refresh support', async () => {
+test('SPA routes (/accounts, /activity, /profile, /profile/security) serve index.html for refresh support', async () => {
   const { handler, ledger } = createAppHandler({ dbPath: ':memory:' });
   try {
-    for (const route of ['/accounts', '/activity', '/account', '/account/security']) {
+    for (const route of ['/accounts', '/activity', '/profile', '/profile/security']) {
       const res = await invokeHandler(handler, { method: 'GET', url: route });
       assert.equal(res.status, 200, `${route} should return 200`);
       assert.match(res.text, /id="view-profile"/);

@@ -9,6 +9,7 @@ import {
   readErrorMessage,
 } from './state.js';
 import { fetchDashboard } from './dashboard.js';
+import { confirmDialog } from './confirm.js';
 
 export function initAccountHandlers() {
   document.getElementById('openAddAccountBtn').addEventListener('click', () => openModal('addAccountOverlay'));
@@ -88,7 +89,14 @@ export function initAccountHandlers() {
 
   document.getElementById('archiveAccountBtn').addEventListener('click', async () => {
     const id = document.getElementById('editAccountId').value;
-    if (!window.confirm('Archive this account? Historical transactions will be preserved.')) return;
+    const confirmed = await confirmDialog({
+      title: 'Archive this account?',
+      message: 'Historical transactions will be preserved, and this account will be hidden from active lists.',
+      confirmText: 'Archive',
+      cancelText: 'Cancel',
+      tone: 'danger',
+    });
+    if (!confirmed) return;
     try {
       const res = await apiFetch(`/api/accounts/${id}`, {
         method: 'PATCH',
