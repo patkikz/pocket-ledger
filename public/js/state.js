@@ -13,6 +13,7 @@ export const state = {
   currencyCode: 'USD',
   referenceDate: getTodayIsoDate(),
   activeView: 'home',
+  activeAccountTab: 'preferences',
   historyFilter: 'ALL',
   searchQuery: '',
   txType: 'EXPENSE',
@@ -85,14 +86,45 @@ export function showToast(msg, isError = false) {
   }, 4000);
 }
 
-export function switchView(viewName) {
+export function parseRoute(pathname = window.location.pathname) {
+  const clean = (pathname || '/').replace(/\/+$/, '') || '/';
+  if (clean === '/accounts') return { viewName: 'accounts', accountTab: 'preferences' };
+  if (clean === '/activity') return { viewName: 'history', accountTab: 'preferences' };
+  if (clean === '/account/security') return { viewName: 'profile', accountTab: 'security' };
+  if (clean === '/account' || clean === '/account/preferences') return { viewName: 'profile', accountTab: 'preferences' };
+  return { viewName: 'home', accountTab: 'preferences' };
+}
+
+export function buildRoutePath(viewName, accountTab = 'preferences') {
+  if (viewName === 'accounts') return '/accounts';
+  if (viewName === 'history') return '/activity';
+  if (viewName === 'profile') return accountTab === 'security' ? '/account/security' : '/account';
+  return '/';
+}
+
+export function switchView(viewName, { push = true, accountTab = state.activeAccountTab } = {}) {
   state.activeView = viewName;
+  state.activeAccountTab = accountTab || 'preferences';
   document.querySelectorAll('.nav-tab').forEach((tab) => {
     tab.classList.toggle('active', tab.dataset.view === viewName);
   });
   document.querySelectorAll('.view-section').forEach((sec) => {
     sec.classList.toggle('active', sec.id === `view-${viewName}`);
   });
+  if (viewName === 'profile') {
+    document.querySelectorAll('.account-nav-item').forEach((btn) => {
+      btn.classList.toggle('active', btn.dataset.accountTab === state.activeAccountTab);
+    });
+    document.querySelectorAll('.account-tab-panel').forEach((panel) => {
+      panel.classList.toggle('hidden', panel.id !== `accountTab-${state.activeAccountTab}`);
+    });
+  }
+  if (push && typeof window !== 'undefined' && window.history?.pushState) {
+    const nextPath = buildRoutePath(viewName, state.activeAccountTab);
+    if (window.location.pathname !== nextPath) {
+      window.history.pushState({ viewName, accountTab: state.activeAccountTab }, '', nextPath);
+    }
+  }
   if (onViewChange) onViewChange(viewName);
 }
 

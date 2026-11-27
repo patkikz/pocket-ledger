@@ -541,8 +541,9 @@ export function createAppHandler({
         return replyJson(404, { error: 'API endpoint not found' });
       }
 
-      // Static file server for PWA frontend
-      const safePath = url.pathname === '/' ? '/index.html' : url.pathname;
+      // Static file server & SPA route fallback for PWA frontend
+      const SPA_ROUTES = new Set(['/', '/overview', '/accounts', '/activity', '/account', '/account/preferences', '/account/security']);
+      const safePath = SPA_ROUTES.has(url.pathname) ? '/index.html' : url.pathname;
       const filePath = path.join(PUBLIC_DIR, path.normalize(safePath));
       if (!filePath.startsWith(PUBLIC_DIR) || !fs.existsSync(filePath) || fs.statSync(filePath).isDirectory()) {
         res.writeHead(404, { 'content-type': 'text/plain; charset=utf-8' });

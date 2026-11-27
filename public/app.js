@@ -1,4 +1,4 @@
-import { state, openModal, closeModal, closeAllModals, switchView, setViewChangeHandler, applyTheme } from './js/state.js';
+import { state, openModal, closeModal, closeAllModals, switchView, parseRoute, setViewChangeHandler, applyTheme } from './js/state.js';
 import { initAuthHandlers, setAuthMode, showAuthError, showAuthView, showAppShell } from './js/auth.js';
 import { fetchDashboard, shiftReferenceMonth } from './js/dashboard.js';
 import { initQuickEntryHandlers } from './js/quick-entry.js';
@@ -36,7 +36,18 @@ document.addEventListener('keydown', (e) => {
 setViewChangeHandler((viewName) => {
   if (viewName === 'history') ensureActivityLoaded();
 });
-initAuthHandlers({ onAuthenticated: fetchDashboard });
+window.addEventListener('popstate', () => {
+  if (!state.user) return;
+  const { viewName, accountTab } = parseRoute(window.location.pathname);
+  switchView(viewName, { push: false, accountTab });
+});
+initAuthHandlers({
+  onAuthenticated: async () => {
+    await fetchDashboard();
+    const { viewName, accountTab } = parseRoute(window.location.pathname);
+    switchView(viewName, { push: false, accountTab });
+  },
+});
 initQuickEntryHandlers({ openAddCategoryModal });
 initAccountHandlers();
 initBudgetAndRecurringHandlers();
@@ -66,6 +77,8 @@ async function boot() {
     if (data.authenticated && data.user) {
       showAppShell(data.user);
       await fetchDashboard();
+      const { viewName, accountTab } = parseRoute(window.location.pathname);
+      switchView(viewName, { push: false, accountTab });
     } else {
       showAuthView({ demoEnabled: state.demoEnabled });
     }

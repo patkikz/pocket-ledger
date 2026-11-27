@@ -1,4 +1,4 @@
-const CACHE_NAME = 'pocketledger-shell-v5';
+const CACHE_NAME = 'pocketledger-shell-v6';
 const SHELL_ASSETS = [
   '/',
   '/index.html',
@@ -68,6 +68,6 @@ self.addEventListener('fetch', (event) => {
         }
         return response;
       })
-      .catch(() => caches.match(request))
+      .catch(() => (request.mode === 'navigate' ? caches.match('/index.html') : caches.match(request)))
   );
 });

@@ -308,3 +308,16 @@ test('Frontend Profile dropdown, Account settings view markup, and service worke
   const sw = fs.readFileSync(path.resolve('public/sw.js'), 'utf8');
   assert.match(sw, /'\/js\/profile\.js'/);
 });
+
+test('SPA routes (/accounts, /activity, /account, /account/security) serve index.html for refresh support', async () => {
+  const { handler, ledger } = createAppHandler({ dbPath: ':memory:' });
+  try {
+    for (const route of ['/accounts', '/activity', '/account', '/account/security']) {
+      const res = await invokeHandler(handler, { method: 'GET', url: route });
+      assert.equal(res.status, 200, `${route} should return 200`);
+      assert.match(res.text, /id="view-profile"/);
+    }
+  } finally {
+    ledger.db.close();
+  }
+});

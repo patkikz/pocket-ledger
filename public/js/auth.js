@@ -65,7 +65,7 @@ export function showAuthView({ demoEnabled = state.demoEnabled } = {}) {
   document.querySelectorAll('#quickEntryOverlay .mode-tabs .tab-btn').forEach((b) => {
     b.classList.toggle('active', b.dataset.txType === 'EXPENSE');
   });
-  switchView('home');
+  switchView('home', { push: false });
 
   document.querySelector('.topbar').classList.add('hidden');
   document.querySelector('main.container').classList.add('hidden');

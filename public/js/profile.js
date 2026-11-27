@@ -36,13 +36,8 @@ export function closeProfileDropdown() {
   if (btn) btn.setAttribute('aria-expanded', 'false');
 }
 
-export function switchAccountTab(tabName) {
-  document.querySelectorAll('.account-nav-item').forEach((btn) => {
-    btn.classList.toggle('active', btn.dataset.accountTab === tabName);
-  });
-  document.querySelectorAll('.account-tab-panel').forEach((panel) => {
-    panel.classList.toggle('hidden', panel.id !== `accountTab-${tabName}`);
-  });
+export function switchAccountTab(tabName, { push = true } = {}) {
+  switchView('profile', { push, accountTab: tabName });
 }
 
 export function renderProfile(user, accounts = []) {
