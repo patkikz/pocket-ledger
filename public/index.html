@@ -22,19 +22,77 @@
 
   <!-- AUTH GATE VIEW (hidden until /api/auth/me resolves) -->
   <section id="authView" class="auth-shell hidden" aria-labelledby="authHeading">
-    <div class="auth-card">
-      <div class="auth-brand">
-        <div class="brand-logo" aria-hidden="true">
-          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
-            <path d="M19 7V4a1 1 0 0 0-1-1H5a2 2 0 0 0 0 4h15a1 1 0 0 1 1 1v4h-3a2 2 0 0 0 0 4h3a1 1 0 0 0 1-1v-2a1 1 0 0 0-1-1"/>
-            <path d="M3 5v14a2 2 0 0 0 2 2h15a1 1 0 0 0 1-1v-4"/>
-          </svg>
+    <div class="auth-layout">
+      <div class="auth-hero">
+        <div class="auth-hero-brand">
+          <div class="brand-logo auth-hero-logo" aria-hidden="true">
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M19 7V4a1 1 0 0 0-1-1H5a2 2 0 0 0 0 4h15a1 1 0 0 1 1 1v4h-3a2 2 0 0 0 0 4h3a1 1 0 0 0 1-1v-2a1 1 0 0 0-1-1"/>
+              <path d="M3 5v14a2 2 0 0 0 2 2h15a1 1 0 0 0 1-1v-4"/>
+            </svg>
+          </div>
+          <span class="auth-hero-brand-name">PocketLedger</span>
         </div>
-        <div>
-          <h1 id="authHeading" class="brand-title">PocketLedger</h1>
-          <p class="auth-subtitle">Personal Budget &amp; Expense Tracker</p>
-        </div>
+
+        <h1 id="authHeading" class="auth-hero-title">See what's safe to spend at a glance.</h1>
+        <p class="auth-hero-copy">Track everyday expenses, stay on top of bills, and keep every wallet balanced—without spreadsheets.</p>
+
+        <ul class="auth-feature-list">
+          <li class="auth-feature-item">
+            <span class="auth-feature-icon" aria-hidden="true">
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                <polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/>
+              </svg>
+            </span>
+            <div>
+              <strong>Log in Seconds</strong>
+              <span>Tap in an expense on your phone before you even leave the counter.</span>
+            </div>
+          </li>
+          <li class="auth-feature-item">
+            <span class="auth-feature-icon" aria-hidden="true">
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                <polyline points="23 4 23 10 17 10"/><polyline points="1 20 1 14 7 14"/>
+                <path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/>
+              </svg>
+            </span>
+            <div>
+              <strong>Always in Sync</strong>
+              <span>Check your budget on your laptop or phone with live updates.</span>
+            </div>
+          </li>
+          <li class="auth-feature-item">
+            <span class="auth-feature-icon" aria-hidden="true">
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                <rect x="3" y="11" width="18" height="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/>
+              </svg>
+            </span>
+            <div>
+              <strong>Locked &amp; Private</strong>
+              <span>Protected with your password and an optional 4-digit PIN on mobile.</span>
+            </div>
+          </li>
+        </ul>
       </div>
+
+      <div class="auth-card">
+        <div class="auth-brand">
+          <div class="brand-logo" aria-hidden="true">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M19 7V4a1 1 0 0 0-1-1H5a2 2 0 0 0 0 4h15a1 1 0 0 1 1 1v4h-3a2 2 0 0 0 0 4h3a1 1 0 0 0 1-1v-2a1 1 0 0 0-1-1"/>
+              <path d="M3 5v14a2 2 0 0 0 2 2h15a1 1 0 0 0 1-1v-4"/>
+            </svg>
+          </div>
+          <div>
+            <span class="brand-title">PocketLedger</span>
+            <p class="auth-subtitle">Personal Budget &amp; Expense Tracker</p>
+          </div>
+        </div>
+
+        <div class="auth-card-header">
+          <h2 id="authCardTitle" class="auth-card-title">Welcome back</h2>
+          <p id="authCardSub" class="auth-card-sub">Sign in to your ledger</p>
+        </div>
 
       <div class="mode-tabs auth-mode-tabs" role="tablist" aria-label="Authentication mode">
         <button type="button" class="tab-btn active" id="authModeSignInBtn" data-auth-mode="login" role="tab" aria-selected="true">Sign In</button>
@@ -42,6 +100,7 @@
       </div>
 
       <div id="authErrorBanner" class="auth-error hidden" role="alert"></div>
+      <div id="authInfoBanner" class="auth-info hidden" role="status"></div>
 
       <form id="authForm" class="settings-form">
         <div class="field-group">
@@ -59,6 +118,9 @@
                 <circle cx="12" cy="12" r="3"/>
               </svg>
             </button>
+          </div>
+          <div class="auth-forgot-row">
+            <button type="button" class="auth-link-btn" id="forgotPasswordLinkBtn">Forgot password?</button>
           </div>
         </div>
 
@@ -87,9 +149,50 @@
         <button type="submit" class="submit-btn" id="authSubmitBtn">Sign In</button>
       </form>
 
-      <div id="demoLoginWrap" class="auth-demo-wrap hidden">
-        <div class="auth-divider"><span>or</span></div>
-        <button type="button" class="btn-secondary auth-demo-btn" id="demoLoginBtn">Try Demo Account</button>
+      <form id="forgotPasswordForm" class="settings-form hidden">
+        <p class="auth-helper-text">Enter your account email and we'll send you a link to reset your password.</p>
+        <div class="field-group">
+          <label for="forgotEmail" class="field-label">Email</label>
+          <input type="email" id="forgotEmail" class="input-field" placeholder="you@example.com" autocomplete="email" required />
+        </div>
+        <button type="submit" class="submit-btn" id="forgotSubmitBtn">Send Reset Link</button>
+        <button type="button" class="btn-secondary auth-back-btn" id="forgotBackBtn">Back to Sign In</button>
+      </form>
+
+      <form id="resetPasswordForm" class="settings-form hidden">
+        <p class="auth-helper-text">Choose a new password for your PocketLedger account.</p>
+        <div class="field-group">
+          <label for="resetNewPassword" class="field-label">New Password</label>
+          <div class="password-input-wrap">
+            <input type="password" id="resetNewPassword" class="input-field" placeholder="At least 8 characters" minlength="8" autocomplete="new-password" required />
+            <button type="button" class="password-toggle-btn" data-toggle-password="resetNewPassword" aria-label="Show password" aria-pressed="false">
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/>
+                <circle cx="12" cy="12" r="3"/>
+              </svg>
+            </button>
+          </div>
+        </div>
+        <div class="field-group">
+          <label for="resetConfirmPassword" class="field-label">Confirm Password</label>
+          <div class="password-input-wrap">
+            <input type="password" id="resetConfirmPassword" class="input-field" placeholder="Repeat new password" minlength="8" autocomplete="new-password" required />
+            <button type="button" class="password-toggle-btn" data-toggle-password="resetConfirmPassword" aria-label="Show password" aria-pressed="false">
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/>
+                <circle cx="12" cy="12" r="3"/>
+              </svg>
+            </button>
+          </div>
+        </div>
+        <button type="submit" class="submit-btn" id="resetSubmitBtn">Reset Password</button>
+        <button type="button" class="btn-secondary auth-back-btn" id="resetBackBtn">Back to Sign In</button>
+      </form>
+
+        <div id="demoLoginWrap" class="auth-demo-wrap hidden">
+          <div class="auth-divider"><span>or</span></div>
+          <button type="button" class="btn-secondary auth-demo-btn" id="demoLoginBtn">Try Demo Account</button>
+        </div>
       </div>
     </div>
   </section>

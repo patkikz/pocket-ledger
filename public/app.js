@@ -1,6 +1,6 @@
 import { state, openModal, switchView, parseRoute, setViewChangeHandler, applyTheme } from './js/state.js';
 import { initModalComponents } from './js/modal.js';
-import { initAuthHandlers, setAuthMode, showAuthError, showAuthView, showAppShell } from './js/auth.js';
+import { initAuthHandlers, setAuthMode, setResetToken, showAuthError, showAuthView, showAppShell } from './js/auth.js';
 import { fetchDashboard, shiftReferenceMonth } from './js/dashboard.js';
 import { initQuickEntryHandlers } from './js/quick-entry.js';
 import { initAccountHandlers } from './js/accounts.js';
@@ -88,6 +88,13 @@ function hideBootLoader() {
 
 async function boot() {
   document.getElementById('txDateInput').value = state.referenceDate;
+  const resetToken = new URLSearchParams(window.location.search).get('resetToken');
+  if (resetToken) {
+    setResetToken(resetToken);
+    showAuthView({ demoEnabled: false });
+    hideBootLoader();
+    return;
+  }
   setAuthMode('login');
   try {
     const res = await fetch('/api/auth/me');

@@ -185,6 +185,18 @@ export function createLedgerDb(dbPath = ':memory:') {
 
     CREATE INDEX IF NOT EXISTS idx_sessions_token_hash ON sessions(token_hash);
     CREATE INDEX IF NOT EXISTS idx_sessions_user ON sessions(user_id);
+
+    CREATE TABLE IF NOT EXISTS password_reset_tokens (
+      id TEXT PRIMARY KEY,
+      user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      token_hash TEXT NOT NULL UNIQUE,
+      expires_at TEXT NOT NULL,
+      used_at TEXT,
+      created_at TEXT NOT NULL
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_password_reset_tokens_hash ON password_reset_tokens(token_hash);
+    CREATE INDEX IF NOT EXISTS idx_password_reset_tokens_user ON password_reset_tokens(user_id);
   `);
 
   const userColumns = db.prepare(`PRAGMA table_info(users)`).all();
@@ -562,6 +574,92 @@ export function createLedgerDb(dbPath = ':memory:') {
         db.prepare(`DELETE FROM sessions WHERE user_id = ?`).run(userId);
       }
     });
+    return true;
+  }
+
+  function hashResetToken(rawToken) {
+    return crypto.createHash('sha256').update(String(rawToken)).digest('hex');
+  }
+
+  function createPasswordResetToken(email, { ttlMinutes = 30 } = {}) {
+    if (typeof email !== 'string' || !email.trim()) return null;
+    const normalizedEmail = email.trim().toLowerCase();
+    if (DEMO_EMAILS.has(normalizedEmail)) return null;
+
+    const row = db
+      .prepare(`SELECT id, email, password_hash FROM users WHERE LOWER(email) = ?`)
+      .get(normalizedEmail);
+    if (!row || !row.password_hash) return null;
+
+    const rawToken = crypto.randomBytes(32).toString('hex');
+    const tokenHash = hashResetToken(rawToken);
+    const nowMs = Date.now();
+    const createdAt = new Date(nowMs).toISOString();
+    const expiresAt = new Date(nowMs + ttlMinutes * 60 * 1000).toISOString();
+
+    runInTransaction(() => {
+      db.prepare(`DELETE FROM password_reset_tokens WHERE user_id = ? AND used_at IS NULL`).run(row.id);
+      db.prepare(
+        `INSERT INTO password_reset_tokens (id, user_id, token_hash, expires_at, created_at)
+         VALUES (?, ?, ?, ?, ?)`
+      ).run(crypto.randomUUID(), row.id, tokenHash, expiresAt, createdAt);
+    });
+
+    return { rawToken, email: row.email, expiresAt };
+  }
+
+  function consumePasswordResetToken({ token, newPassword } = {}) {
+    if (typeof token !== 'string' || !token.trim()) {
+      const err = new Error('Reset link is invalid or expired');
+      err.statusCode = 400;
+      throw err;
+    }
+    if (typeof newPassword !== 'string' || newPassword.length < 8) {
+      const err = new RangeError('New password must be at least 8 characters long');
+      err.statusCode = 400;
+      throw err;
+    }
+
+    const tokenHash = hashResetToken(token.trim());
+    const nowIso = new Date().toISOString();
+    const resetRow = db
+      .prepare(
+        `SELECT prt.id, prt.user_id, prt.expires_at, prt.used_at, u.email
+         FROM password_reset_tokens prt
+         JOIN users u ON u.id = prt.user_id
+         WHERE prt.token_hash = ?`
+      )
+      .get(tokenHash);
+
+    if (!resetRow || resetRow.used_at || resetRow.expires_at <= nowIso) {
+      const err = new Error('Reset link is invalid or expired');
+      err.statusCode = 400;
+      throw err;
+    }
+    if (DEMO_EMAILS.has(String(resetRow.email).toLowerCase())) {
+      const err = new Error('Demo accounts cannot reset password');
+      err.statusCode = 403;
+      throw err;
+    }
+
+    const nextHash = hashPassword(newPassword);
+    runInTransaction(() => {
+      const result = db
+        .prepare(
+          `UPDATE password_reset_tokens
+           SET used_at = ?
+           WHERE id = ? AND used_at IS NULL AND expires_at > ?`
+        )
+        .run(nowIso, resetRow.id, nowIso);
+      if (!result || result.changes === 0) {
+        const err = new Error('Reset link is invalid or expired');
+        err.statusCode = 400;
+        throw err;
+      }
+      db.prepare(`UPDATE users SET password_hash = ? WHERE id = ?`).run(nextHash, resetRow.user_id);
+      db.prepare(`DELETE FROM sessions WHERE user_id = ?`).run(resetRow.user_id);
+    });
+
     return true;
   }
 
@@ -1623,6 +1721,8 @@ export function createLedgerDb(dbPath = ':memory:') {
     updateUserProfile,
     updateUserSettings,
     changePassword,
+    createPasswordResetToken,
+    consumePasswordResetToken,
     setPin,
     removePin,
     verifyPin,

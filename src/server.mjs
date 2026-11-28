@@ -6,6 +6,7 @@ import { createLedgerDb } from './ledger.mjs';
 import { createPostgresLedger } from './ledger-pg.mjs';
 import { seedDefaultTenants } from './seed.mjs';
 import { createRateLimiter, getClientIp } from './rate-limit.mjs';
+import { createMailer } from './mailer.mjs';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -103,6 +104,7 @@ export function createAppHandler({
   dbPath,
   databaseUrl = process.env.DATABASE_URL,
   disableDemo = process.env.DISABLE_DEMO === '1',
+  mailer = createMailer(),
 } = {}) {
   const usePostgres = !dbPath && Boolean(databaseUrl);
   const resolvedDbPath = dbPath || process.env.DB_PATH || path.join(__dirname, '..', 'pocket-ledger.sqlite');
@@ -146,6 +148,21 @@ export function createAppHandler({
   const registerLimiter = createRateLimiter({ windowMs: 15 * 60 * 1000, maxAttempts: 10 });
   const pinLimiter = createRateLimiter({ windowMs: 15 * 60 * 1000, maxAttempts: 5 });
   const passwordChangeLimiter = createRateLimiter({ windowMs: 15 * 60 * 1000, maxAttempts: 5 });
+  const forgotPasswordIpLimiter = createRateLimiter({ windowMs: 15 * 60 * 1000, maxAttempts: 10 });
+  const forgotPasswordEmailLimiter = createRateLimiter({ windowMs: 15 * 60 * 1000, maxAttempts: 3 });
+  const resetPasswordLimiter = createRateLimiter({ windowMs: 15 * 60 * 1000, maxAttempts: 10 });
+
+  function getAppBaseUrl(req) {
+    const configured = process.env.APP_BASE_URL ? String(process.env.APP_BASE_URL).trim() : '';
+    if (configured) return configured.replace(/\/+$/, '');
+    const protoHeader = req.headers?.['x-forwarded-proto'];
+    const proto = typeof protoHeader === 'string' && protoHeader.trim()
+      ? protoHeader.split(',')[0].trim()
+      : 'http';
+    const hostHeader = req.headers?.['x-forwarded-host'] || req.headers?.host || 'localhost:3000';
+    const host = String(hostHeader).split(',')[0].trim();
+    return `${proto}://${host}`;
+  }
 
   function formatRetryDuration(retryAfterSeconds) {
     const total = Math.max(1, Math.ceil(retryAfterSeconds));
@@ -287,6 +304,100 @@ export function createAppHandler({
           await ledger.deleteSessionByToken(rawToken);
         }
         return sendJson(res, 200, { ok: true }, { 'set-cookie': buildSessionCookie('', req, 0) });
+      }
+
+      if (req.method === 'POST' && url.pathname === '/api/auth/forgot-password') {
+        const clientIp = getClientIp(req);
+        const ipCheck = forgotPasswordIpLimiter.check(clientIp);
+        if (!ipCheck.allowed) {
+          return sendJson(
+            res,
+            429,
+            {
+              error: `Too many password reset requests. Please try again in ${formatRetryDuration(ipCheck.retryAfterSeconds)}.`,
+              retryAfterSeconds: ipCheck.retryAfterSeconds,
+            },
+            { 'retry-after': String(ipCheck.retryAfterSeconds) }
+          );
+        }
+
+        const body = await readJsonBody(req);
+        const email = typeof body.email === 'string' ? body.email.trim().toLowerCase() : '';
+        if (!email || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+          return sendJson(res, 400, { error: 'Please enter a valid email address.' });
+        }
+
+        const emailKey = `${clientIp}:${email}`;
+        const emailCheck = forgotPasswordEmailLimiter.check(emailKey);
+        if (!emailCheck.allowed) {
+          return sendJson(
+            res,
+            429,
+            {
+              error: `Too many reset requests for this email. Please try again in ${formatRetryDuration(emailCheck.retryAfterSeconds)}.`,
+              retryAfterSeconds: emailCheck.retryAfterSeconds,
+            },
+            { 'retry-after': String(emailCheck.retryAfterSeconds) }
+          );
+        }
+
+        forgotPasswordIpLimiter.recordFailure(clientIp);
+        forgotPasswordEmailLimiter.recordFailure(emailKey);
+
+        const created = await ledger.createPasswordResetToken(email, { ttlMinutes: 30 });
+        if (created?.rawToken) {
+          const resetUrl = `${getAppBaseUrl(req)}/?resetToken=${encodeURIComponent(created.rawToken)}`;
+          try {
+            await mailer.sendPasswordResetEmail({
+              to: created.email,
+              resetUrl,
+              expiresMinutes: 30,
+            });
+          } catch (mailErr) {
+            console.error('[PocketLedger] Failed to send password reset email:', mailErr);
+            return sendJson(res, 502, { error: 'Unable to send reset email right now. Please try again shortly.' });
+          }
+        }
+
+        return sendJson(res, 200, {
+          ok: true,
+          message: 'If an account exists for that email, a password reset link has been sent.',
+        });
+      }
+
+      if (req.method === 'POST' && url.pathname === '/api/auth/reset-password') {
+        const clientIp = getClientIp(req);
+        const resetCheck = resetPasswordLimiter.check(clientIp);
+        if (!resetCheck.allowed) {
+          return sendJson(
+            res,
+            429,
+            {
+              error: `Too many password reset attempts. Please try again in ${formatRetryDuration(resetCheck.retryAfterSeconds)}.`,
+              retryAfterSeconds: resetCheck.retryAfterSeconds,
+            },
+            { 'retry-after': String(resetCheck.retryAfterSeconds) }
+          );
+        }
+        resetPasswordLimiter.recordFailure(clientIp);
+
+        const body = await readJsonBody(req);
+        try {
+          await ledger.consumePasswordResetToken({
+            token: body.token,
+            newPassword: body.newPassword,
+          });
+        } catch (err) {
+          const status = err.statusCode || 400;
+          return sendJson(res, status, { error: err.message || 'Reset link is invalid or expired' });
+        }
+
+        return sendJson(
+          res,
+          200,
+          { ok: true, message: 'Password updated. Please sign in with your new password.' },
+          { 'set-cookie': buildSessionCookie('', req, 0) }
+        );
       }
 
       if (req.method === 'GET' && url.pathname === '/api/auth/me') {

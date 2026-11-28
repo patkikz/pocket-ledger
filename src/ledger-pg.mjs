@@ -255,6 +255,16 @@ export function createPostgresLedger(connectionString, { pool: injectedPool } = 
       `CREATE INDEX IF NOT EXISTS idx_transactions_user_date ON transactions(user_id, occurred_on)`,
       `CREATE INDEX IF NOT EXISTS idx_ledger_entries_account ON ledger_entries(user_id, account_id, voided_at)`,
       `CREATE INDEX IF NOT EXISTS idx_sessions_user ON sessions(user_id)`,
+      `CREATE TABLE IF NOT EXISTS password_reset_tokens (
+        id TEXT PRIMARY KEY,
+        user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+        token_hash TEXT NOT NULL UNIQUE,
+        expires_at TEXT NOT NULL,
+        used_at TEXT,
+        created_at TEXT NOT NULL
+      )`,
+      `CREATE INDEX IF NOT EXISTS idx_password_reset_tokens_hash ON password_reset_tokens(token_hash)`,
+      `CREATE INDEX IF NOT EXISTS idx_password_reset_tokens_user ON password_reset_tokens(user_id)`,
       `ALTER TABLE users ADD COLUMN IF NOT EXISTS display_name TEXT`,
       `ALTER TABLE users ADD COLUMN IF NOT EXISTS avatar_color TEXT NOT NULL DEFAULT '#6366f1'`,
       `ALTER TABLE users ADD COLUMN IF NOT EXISTS theme TEXT NOT NULL DEFAULT 'system'`,
@@ -538,6 +548,93 @@ export function createPostgresLedger(connectionString, { pool: injectedPool } = 
         await query(`DELETE FROM sessions WHERE user_id = $1`, [userId]);
       }
     });
+    return true;
+  }
+
+  function hashResetToken(rawToken) {
+    return crypto.createHash('sha256').update(String(rawToken)).digest('hex');
+  }
+
+  async function createPasswordResetToken(email, { ttlMinutes = 30 } = {}) {
+    if (typeof email !== 'string' || !email.trim()) return null;
+    const normalizedEmail = email.trim().toLowerCase();
+    if (DEMO_EMAILS.has(normalizedEmail)) return null;
+
+    const row = await queryOne(
+      `SELECT id, email, password_hash FROM users WHERE LOWER(email) = $1`,
+      [normalizedEmail]
+    );
+    if (!row || !row.password_hash) return null;
+
+    const rawToken = crypto.randomBytes(32).toString('hex');
+    const tokenHash = hashResetToken(rawToken);
+    const nowMs = Date.now();
+    const createdAt = new Date(nowMs).toISOString();
+    const expiresAt = new Date(nowMs + ttlMinutes * 60 * 1000).toISOString();
+
+    await runInTransaction(async () => {
+      await query(`DELETE FROM password_reset_tokens WHERE user_id = $1 AND used_at IS NULL`, [row.id]);
+      await query(
+        `INSERT INTO password_reset_tokens (id, user_id, token_hash, expires_at, created_at)
+         VALUES ($1, $2, $3, $4, $5)`,
+        [crypto.randomUUID(), row.id, tokenHash, expiresAt, createdAt]
+      );
+    });
+
+    return { rawToken, email: row.email, expiresAt };
+  }
+
+  async function consumePasswordResetToken({ token, newPassword } = {}) {
+    if (typeof token !== 'string' || !token.trim()) {
+      const err = new Error('Reset link is invalid or expired');
+      err.statusCode = 400;
+      throw err;
+    }
+    if (typeof newPassword !== 'string' || newPassword.length < 8) {
+      const err = new RangeError('New password must be at least 8 characters long');
+      err.statusCode = 400;
+      throw err;
+    }
+
+    const tokenHash = hashResetToken(token.trim());
+    const nowIso = new Date().toISOString();
+    const resetRow = await queryOne(
+      `SELECT prt.id, prt.user_id, prt.expires_at, prt.used_at, u.email
+       FROM password_reset_tokens prt
+       JOIN users u ON u.id = prt.user_id
+       WHERE prt.token_hash = $1`,
+      [tokenHash]
+    );
+
+    if (!resetRow || resetRow.used_at || resetRow.expires_at <= nowIso) {
+      const err = new Error('Reset link is invalid or expired');
+      err.statusCode = 400;
+      throw err;
+    }
+    if (DEMO_EMAILS.has(String(resetRow.email).toLowerCase())) {
+      const err = new Error('Demo accounts cannot reset password');
+      err.statusCode = 403;
+      throw err;
+    }
+
+    const nextHash = hashPassword(newPassword);
+    await runInTransaction(async () => {
+      const updated = await queryOne(
+        `UPDATE password_reset_tokens
+         SET used_at = $1
+         WHERE id = $2 AND used_at IS NULL AND expires_at > $3
+         RETURNING id`,
+        [nowIso, resetRow.id, nowIso]
+      );
+      if (!updated) {
+        const err = new Error('Reset link is invalid or expired');
+        err.statusCode = 400;
+        throw err;
+      }
+      await query(`UPDATE users SET password_hash = $1 WHERE id = $2`, [nextHash, resetRow.user_id]);
+      await query(`DELETE FROM sessions WHERE user_id = $1`, [resetRow.user_id]);
+    });
+
     return true;
   }
 
@@ -1471,6 +1568,8 @@ export function createPostgresLedger(connectionString, { pool: injectedPool } = 
     updateUserProfile,
     updateUserSettings,
     changePassword,
+    createPasswordResetToken,
+    consumePasswordResetToken,
     setPin,
     removePin,
     verifyPin,
