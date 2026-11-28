@@ -19,6 +19,31 @@ export function createMailer({
   const trimmedKey = String(apiKey || '').trim();
   const trimmedFrom = String(from || '').trim();
 
+  async function postResendEmail({ to, subject, text, html }) {
+    const response = await fetchImpl('https://api.resend.com/emails', {
+      method: 'POST',
+      headers: {
+        authorization: `Bearer ${trimmedKey}`,
+        'content-type': 'application/json',
+      },
+      body: JSON.stringify({
+        from: trimmedFrom,
+        to: [to],
+        subject,
+        text,
+        html,
+      }),
+    });
+
+    if (!response.ok) {
+      const errorBody = await response.text().catch(() => '');
+      throw new Error(`Resend API error (${response.status}): ${errorBody || 'Unknown error'}`);
+    }
+
+    const data = await response.json().catch(() => ({}));
+    return { delivered: true, mode: 'resend', id: data.id || null };
+  }
+
   async function sendPasswordResetEmail({ to, resetUrl, expiresMinutes = 30 }) {
     if (!trimmedKey || !trimmedFrom) {
       logger.info(`[PocketLedger] Password reset link for ${to}: ${resetUrl}`);
@@ -48,29 +73,37 @@ export function createMailer({
       </div>
     `.trim();
 
-    const response = await fetchImpl('https://api.resend.com/emails', {
-      method: 'POST',
-      headers: {
-        authorization: `Bearer ${trimmedKey}`,
-        'content-type': 'application/json',
-      },
-      body: JSON.stringify({
-        from: trimmedFrom,
-        to: [to],
-        subject,
-        text,
-        html,
-      }),
-    });
-
-    if (!response.ok) {
-      const errorBody = await response.text().catch(() => '');
-      throw new Error(`Resend API error (${response.status}): ${errorBody || 'Unknown error'}`);
-    }
-
-    const data = await response.json().catch(() => ({}));
-    return { delivered: true, mode: 'resend', id: data.id || null };
+    return postResendEmail({ to, subject, text, html });
   }
 
-  return { sendPasswordResetEmail };
+  async function sendEmailVerificationCode({ to, code, expiresMinutes = 15 }) {
+    if (!trimmedKey || !trimmedFrom) {
+      logger.info(`[PocketLedger] Email verification code for ${to}: ${code}`);
+      return { delivered: false, mode: 'console' };
+    }
+
+    const safeCode = escapeHtml(code);
+    const subject = 'Confirm your PocketLedger email';
+    const text = [
+      'Welcome to PocketLedger!',
+      '',
+      `Your 6-digit confirmation code is: ${code}`,
+      `This code expires in ${expiresMinutes} minutes.`,
+      '',
+      'If you did not create an account, you can safely ignore this email.',
+    ].join('\n');
+
+    const html = `
+      <div style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; max-width: 480px; margin: 0 auto; color: #0f172a;">
+        <h2 style="margin-bottom: 12px;">Confirm your PocketLedger email</h2>
+        <p style="line-height: 1.5;">Enter this 6-digit code in PocketLedger to activate your account. It expires in <strong>${expiresMinutes} minutes</strong>.</p>
+        <div style="margin: 24px 0; padding: 16px; background: #f1f5f9; border-radius: 12px; text-align: center; font-size: 30px; font-weight: 700; letter-spacing: 0.35em; color: #0f172a;">${safeCode}</div>
+        <p style="font-size: 13px; color: #64748b;">If you did not create an account, you can safely ignore this email.</p>
+      </div>
+    `.trim();
+
+    return postResendEmail({ to, subject, text, html });
+  }
+
+  return { sendPasswordResetEmail, sendEmailVerificationCode };
 }

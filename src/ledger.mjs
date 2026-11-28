@@ -197,11 +197,27 @@ export function createLedgerDb(dbPath = ':memory:') {
 
     CREATE INDEX IF NOT EXISTS idx_password_reset_tokens_hash ON password_reset_tokens(token_hash);
     CREATE INDEX IF NOT EXISTS idx_password_reset_tokens_user ON password_reset_tokens(user_id);
+
+    CREATE TABLE IF NOT EXISTS email_verification_codes (
+      id TEXT PRIMARY KEY,
+      user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      code_hash TEXT NOT NULL,
+      attempts INTEGER NOT NULL DEFAULT 0,
+      expires_at TEXT NOT NULL,
+      used_at TEXT,
+      created_at TEXT NOT NULL
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_email_verification_codes_user ON email_verification_codes(user_id);
   `);
 
   const userColumns = db.prepare(`PRAGMA table_info(users)`).all();
   if (!userColumns.some((col) => col.name === 'password_hash')) {
     db.exec(`ALTER TABLE users ADD COLUMN password_hash TEXT`);
+  }
+  if (!userColumns.some((col) => col.name === 'email_verified_at')) {
+    db.exec(`ALTER TABLE users ADD COLUMN email_verified_at TEXT`);
+    db.exec(`UPDATE users SET email_verified_at = created_at WHERE email_verified_at IS NULL AND LOWER(email) IN ('patrick@pocketledger.app', 'alex.isolated@pocketledger.app')`);
   }
   if (!userColumns.some((col) => col.name === 'display_name')) {
     db.exec(`ALTER TABLE users ADD COLUMN display_name TEXT`);
@@ -285,7 +301,7 @@ export function createLedgerDb(dbPath = ':memory:') {
     return cat;
   }
 
-  function createUser({ id = crypto.randomUUID(), email, homeCurrencyCode = 'USD', budgetCycleStartDay = 1 }) {
+  function createUser({ id = crypto.randomUUID(), email, homeCurrencyCode = 'USD', budgetCycleStartDay = 1, emailVerified = true }) {
     if (!email || typeof email !== 'string') {
       throw new TypeError('Valid user email is required');
     }
@@ -293,15 +309,16 @@ export function createLedgerDb(dbPath = ':memory:') {
       throw new RangeError('budgetCycleStartDay must be an integer between 1 and 28');
     }
     const now = new Date().toISOString();
+    const verifiedAt = emailVerified ? now : null;
     db.prepare(`
-      INSERT INTO users (id, email, home_currency_code, budget_cycle_start_day, created_at)
-      VALUES (?, ?, ?, ?, ?)
-    `).run(id, email.trim(), homeCurrencyCode.toUpperCase(), budgetCycleStartDay, now);
+      INSERT INTO users (id, email, home_currency_code, budget_cycle_start_day, email_verified_at, created_at)
+      VALUES (?, ?, ?, ?, ?, ?)
+    `).run(id, email.trim(), homeCurrencyCode.toUpperCase(), budgetCycleStartDay, verifiedAt, now);
 
     return getUser(id);
   }
 
-  function registerUser({ email, password, homeCurrencyCode = 'USD', budgetCycleStartDay = 1 } = {}) {
+  function registerUser({ email, password, homeCurrencyCode = 'USD', budgetCycleStartDay = 1, emailVerified = false } = {}) {
     if (typeof email !== 'string' || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email.trim())) {
       const err = new TypeError('Valid user email is required');
       err.code = 'INVALID_EMAIL';
@@ -330,10 +347,11 @@ export function createLedgerDb(dbPath = ':memory:') {
 
       const id = crypto.randomUUID();
       const now = new Date().toISOString();
+      const verifiedAt = emailVerified ? now : null;
       db.prepare(`
-        INSERT INTO users (id, email, password_hash, home_currency_code, budget_cycle_start_day, created_at)
-        VALUES (?, ?, ?, ?, ?, ?)
-      `).run(id, normalizedEmail, passwordHash, homeCurrencyCode.trim().toUpperCase(), cycleDay, now);
+        INSERT INTO users (id, email, password_hash, home_currency_code, budget_cycle_start_day, email_verified_at, created_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?)
+      `).run(id, normalizedEmail, passwordHash, homeCurrencyCode.trim().toUpperCase(), cycleDay, verifiedAt, now);
 
       for (const cat of STARTER_CATEGORIES) {
         createCategory(id, cat);
@@ -351,12 +369,18 @@ export function createLedgerDb(dbPath = ':memory:') {
     if (!normalizedEmail) {
       return null;
     }
-    const row = db.prepare(`SELECT id, password_hash FROM users WHERE LOWER(email) = ?`).get(normalizedEmail);
+    const row = db.prepare(`SELECT id, password_hash, email_verified_at FROM users WHERE LOWER(email) = ?`).get(normalizedEmail);
     if (!row || !row.password_hash) {
       return null;
     }
     if (!verifyPassword(password, row.password_hash)) {
       return null;
+    }
+    if (!row.email_verified_at) {
+      const err = new Error('Please confirm your email address before signing in.');
+      err.code = 'EMAIL_NOT_VERIFIED';
+      err.statusCode = 403;
+      throw err;
     }
     return getUser(row.id);
   }
@@ -461,6 +485,7 @@ export function createLedgerDb(dbPath = ':memory:') {
       budgetCycleStartDay: Number(u.budget_cycle_start_day),
       lastUsedAccountId: u.last_used_account_id,
       hasPin: Boolean(u.pin_hash),
+      emailVerified: Boolean(u.email_verified_at),
       createdAt: u.created_at,
     };
   }
@@ -575,6 +600,101 @@ export function createLedgerDb(dbPath = ':memory:') {
       }
     });
     return true;
+  }
+
+  function hashVerificationCode(userId, code) {
+    return crypto.createHash('sha256').update(`${userId}:${String(code).trim()}`).digest('hex');
+  }
+
+  function createEmailVerificationCode(email, { ttlMinutes = 15 } = {}) {
+    if (typeof email !== 'string' || !email.trim()) return null;
+    const normalizedEmail = email.trim().toLowerCase();
+    if (DEMO_EMAILS.has(normalizedEmail)) return null;
+
+    const row = db
+      .prepare(`SELECT id, email, email_verified_at FROM users WHERE LOWER(email) = ?`)
+      .get(normalizedEmail);
+    if (!row || row.email_verified_at) return null;
+
+    const code = String(crypto.randomInt(100000, 1000000));
+    const codeHash = hashVerificationCode(row.id, code);
+    const nowMs = Date.now();
+    const createdAt = new Date(nowMs).toISOString();
+    const expiresAt = new Date(nowMs + ttlMinutes * 60 * 1000).toISOString();
+
+    runInTransaction(() => {
+      db.prepare(`DELETE FROM email_verification_codes WHERE user_id = ? AND used_at IS NULL`).run(row.id);
+      db.prepare(
+        `INSERT INTO email_verification_codes (id, user_id, code_hash, attempts, expires_at, created_at)
+         VALUES (?, ?, ?, 0, ?, ?)`
+      ).run(crypto.randomUUID(), row.id, codeHash, expiresAt, createdAt);
+    });
+
+    return { code, email: row.email, expiresAt };
+  }
+
+  function verifyEmailCode({ email, code } = {}) {
+    const normalizedEmail = typeof email === 'string' ? email.trim().toLowerCase() : '';
+    const cleanCode = typeof code === 'string' ? code.trim() : '';
+    if (!normalizedEmail || !/^\d{6}$/.test(cleanCode)) {
+      const err = new Error('Please enter a valid 6-digit verification code.');
+      err.statusCode = 400;
+      throw err;
+    }
+
+    const userRow = db
+      .prepare(`SELECT id, email, email_verified_at FROM users WHERE LOWER(email) = ?`)
+      .get(normalizedEmail);
+    if (!userRow) {
+      const err = new Error('Verification code is invalid or expired.');
+      err.statusCode = 400;
+      throw err;
+    }
+    if (userRow.email_verified_at) {
+      return getUser(userRow.id);
+    }
+
+    const codeRow = db
+      .prepare(
+        `SELECT id, code_hash, attempts, expires_at
+         FROM email_verification_codes
+         WHERE user_id = ? AND used_at IS NULL
+         ORDER BY created_at DESC
+         LIMIT 1`
+      )
+      .get(userRow.id);
+
+    const nowIso = new Date().toISOString();
+    if (!codeRow || codeRow.expires_at <= nowIso) {
+      const err = new Error('Verification code is invalid or expired.');
+      err.statusCode = 400;
+      throw err;
+    }
+    if (Number(codeRow.attempts) >= 5) {
+      const err = new Error('Too many incorrect codes. Please request a new verification code.');
+      err.statusCode = 400;
+      throw err;
+    }
+
+    const expectedHash = hashVerificationCode(userRow.id, cleanCode);
+    if (expectedHash !== codeRow.code_hash) {
+      const nextAttempts = Number(codeRow.attempts) + 1;
+      db.prepare(`UPDATE email_verification_codes SET attempts = ? WHERE id = ?`).run(nextAttempts, codeRow.id);
+      const err = new Error(
+        nextAttempts >= 5
+          ? 'Too many incorrect codes. Please request a new verification code.'
+          : 'Verification code is invalid.'
+      );
+      err.statusCode = 400;
+      throw err;
+    }
+
+    runInTransaction(() => {
+      db.prepare(`UPDATE email_verification_codes SET used_at = ? WHERE id = ?`).run(nowIso, codeRow.id);
+      db.prepare(`UPDATE users SET email_verified_at = ? WHERE id = ? AND email_verified_at IS NULL`).run(nowIso, userRow.id);
+    });
+
+    return getUser(userRow.id);
   }
 
   function hashResetToken(rawToken) {
@@ -1723,6 +1843,8 @@ export function createLedgerDb(dbPath = ':memory:') {
     changePassword,
     createPasswordResetToken,
     consumePasswordResetToken,
+    createEmailVerificationCode,
+    verifyEmailCode,
     setPin,
     removePin,
     verifyPin,

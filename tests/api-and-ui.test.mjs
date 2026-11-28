@@ -57,7 +57,7 @@ async function loginAs(handler, email, password) {
   return headerVal.split(';')[0];
 }
 
-async function registerAs(handler, email, password) {
+async function registerAs(handler, email, password, getLatestCode) {
   const res = await invokeHandler(handler, {
     method: 'POST',
     url: '/api/auth/register',
@@ -65,7 +65,14 @@ async function registerAs(handler, email, password) {
     body: { email, password },
   });
   assert.equal(res.status, 201, `Register failed for ${email}: ${res.text}`);
-  const raw = res.headers['set-cookie'];
+  const verRes = await invokeHandler(handler, {
+    method: 'POST',
+    url: '/api/auth/verify-email',
+    headers: { 'content-type': 'application/json' },
+    body: { email, code: getLatestCode() },
+  });
+  assert.equal(verRes.status, 200, `Verify failed for ${email}: ${verRes.text}`);
+  const raw = verRes.headers['set-cookie'];
   const headerVal = Array.isArray(raw) ? raw.find((c) => c.startsWith('pl_session=')) : raw;
   assert.ok(headerVal, 'Expected Set-Cookie header for pl_session');
   return headerVal.split(';')[0];
@@ -137,11 +144,20 @@ test('Criterion #3 & HTTP API: Smart defaults pre-select last used wallet & top 
 });
 
 test('In-app management APIs: create category, update monthly cap, create recurring rule, and clean My Budget profile', async () => {
-  const { handler, personalUserId } = createAppHandler({ dbPath: ':memory:' });
+  const sentOtps = [];
+  const { handler, personalUserId } = createAppHandler({
+    dbPath: ':memory:',
+    mailer: {
+      async sendEmailVerificationCode(payload) {
+        sentOtps.push(payload);
+        return { delivered: true, mode: 'mock' };
+      },
+    },
+  });
 
   // 1. Personal clean-slate profile exists and a registered account starts with 0 transactions
   assert.ok(personalUserId, 'personalUserId is returned');
-  const personalCookie = await registerAs(handler, 'personal.clean@example.com', 'password123');
+  const personalCookie = await registerAs(handler, 'personal.clean@example.com', 'password123', () => sentOtps.at(-1).code);
   const personalDashRes = await invokeHandler(handler, {
     method: 'GET',
     url: '/api/dashboard?date=2026-11-26',

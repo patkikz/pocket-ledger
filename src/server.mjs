@@ -151,6 +151,9 @@ export function createAppHandler({
   const forgotPasswordIpLimiter = createRateLimiter({ windowMs: 15 * 60 * 1000, maxAttempts: 10 });
   const forgotPasswordEmailLimiter = createRateLimiter({ windowMs: 15 * 60 * 1000, maxAttempts: 3 });
   const resetPasswordLimiter = createRateLimiter({ windowMs: 15 * 60 * 1000, maxAttempts: 10 });
+  const verifyEmailIpLimiter = createRateLimiter({ windowMs: 15 * 60 * 1000, maxAttempts: 15 });
+  const verifyEmailKeyLimiter = createRateLimiter({ windowMs: 15 * 60 * 1000, maxAttempts: 5 });
+  const resendVerificationLimiter = createRateLimiter({ windowMs: 15 * 60 * 1000, maxAttempts: 3 });
 
   function getAppBaseUrl(req) {
     const configured = process.env.APP_BASE_URL ? String(process.env.APP_BASE_URL).trim() : '';
@@ -249,8 +252,113 @@ export function createAppHandler({
           const status = err.statusCode || (err.code === 'DUPLICATE_EMAIL' ? 409 : 400);
           return sendJson(res, status, { error: err.message || 'Registration failed' });
         }
+        const otp = await ledger.createEmailVerificationCode(user.email, { ttlMinutes: 15 });
+        if (otp?.code) {
+          try {
+            await mailer.sendEmailVerificationCode({
+              to: otp.email,
+              code: otp.code,
+              expiresMinutes: 15,
+            });
+          } catch (mailErr) {
+            console.error('[PocketLedger] Failed to send verification email:', mailErr);
+            return sendJson(res, 502, {
+              error: 'Account created, but we could not send the verification email. Please try Resend Code.',
+              requiresVerification: true,
+              email: user.email,
+            });
+          }
+        }
+        return sendJson(res, 201, {
+          requiresVerification: true,
+          email: user.email,
+          message: 'We sent a 6-digit verification code to your email.',
+        });
+      }
+
+      if (req.method === 'POST' && url.pathname === '/api/auth/verify-email') {
+        const clientIp = getClientIp(req);
+        const ipCheck = verifyEmailIpLimiter.check(clientIp);
+        if (!ipCheck.allowed) {
+          return sendJson(
+            res,
+            429,
+            {
+              error: `Too many verification attempts. Please try again in ${formatRetryDuration(ipCheck.retryAfterSeconds)}.`,
+              retryAfterSeconds: ipCheck.retryAfterSeconds,
+            },
+            { 'retry-after': String(ipCheck.retryAfterSeconds) }
+          );
+        }
+        const body = await readJsonBody(req);
+        const normalizedEmail = typeof body.email === 'string' ? body.email.trim().toLowerCase() : '';
+        const verifyKey = `${clientIp}:${normalizedEmail}`;
+        const keyCheck = verifyEmailKeyLimiter.check(verifyKey);
+        if (!keyCheck.allowed) {
+          return sendJson(
+            res,
+            429,
+            {
+              error: `Too many verification attempts. Please try again in ${formatRetryDuration(keyCheck.retryAfterSeconds)}.`,
+              retryAfterSeconds: keyCheck.retryAfterSeconds,
+            },
+            { 'retry-after': String(keyCheck.retryAfterSeconds) }
+          );
+        }
+
+        let user;
+        try {
+          user = await ledger.verifyEmailCode({ email: body.email, code: body.code });
+        } catch (err) {
+          verifyEmailIpLimiter.recordFailure(clientIp);
+          verifyEmailKeyLimiter.recordFailure(verifyKey);
+          return sendJson(res, err.statusCode || 400, { error: err.message || 'Verification failed' });
+        }
+
+        verifyEmailKeyLimiter.reset(verifyKey);
         const { rawToken: sessionToken } = await ledger.createSession(user.id);
-        return sendJson(res, 201, { user }, { 'set-cookie': buildSessionCookie(sessionToken, req) });
+        return sendJson(res, 200, { user }, { 'set-cookie': buildSessionCookie(sessionToken, req) });
+      }
+
+      if (req.method === 'POST' && url.pathname === '/api/auth/resend-verification') {
+        const clientIp = getClientIp(req);
+        const body = await readJsonBody(req);
+        const email = typeof body.email === 'string' ? body.email.trim().toLowerCase() : '';
+        if (!email || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+          return sendJson(res, 400, { error: 'Please enter a valid email address.' });
+        }
+        const resendKey = `${clientIp}:${email}`;
+        const resendCheck = resendVerificationLimiter.check(resendKey);
+        if (!resendCheck.allowed) {
+          return sendJson(
+            res,
+            429,
+            {
+              error: `Please wait ${formatRetryDuration(resendCheck.retryAfterSeconds)} before requesting another code.`,
+              retryAfterSeconds: resendCheck.retryAfterSeconds,
+            },
+            { 'retry-after': String(resendCheck.retryAfterSeconds) }
+          );
+        }
+        resendVerificationLimiter.recordFailure(resendKey);
+
+        const otp = await ledger.createEmailVerificationCode(email, { ttlMinutes: 15 });
+        if (otp?.code) {
+          try {
+            await mailer.sendEmailVerificationCode({
+              to: otp.email,
+              code: otp.code,
+              expiresMinutes: 15,
+            });
+          } catch (mailErr) {
+            console.error('[PocketLedger] Failed to resend verification email:', mailErr);
+            return sendJson(res, 502, { error: 'Unable to send verification email right now. Please try again shortly.' });
+          }
+        }
+        return sendJson(res, 200, {
+          ok: true,
+          message: 'If an unverified account exists for that email, a new code has been sent.',
+        });
       }
 
       if (req.method === 'POST' && url.pathname === '/api/auth/login') {
@@ -285,10 +393,43 @@ export function createAppHandler({
         if (disableDemo && DEMO_EMAILS.has(normalizedEmail)) {
           return sendJson(res, 403, { error: 'Demo accounts are disabled' });
         }
-        const user = await ledger.authenticateUser({
-          email: body.email,
-          password: body.password,
-        });
+        let user;
+        try {
+          user = await ledger.authenticateUser({
+            email: body.email,
+            password: body.password,
+          });
+        } catch (err) {
+          if (err.code === 'EMAIL_NOT_VERIFIED') {
+            const resendKey = `${clientIp}:${normalizedEmail}`;
+            let codeSent = false;
+            if (resendVerificationLimiter.check(resendKey).allowed) {
+              resendVerificationLimiter.recordFailure(resendKey);
+              const otp = await ledger.createEmailVerificationCode(normalizedEmail, { ttlMinutes: 15 });
+              if (otp?.code) {
+                try {
+                  await mailer.sendEmailVerificationCode({
+                    to: otp.email,
+                    code: otp.code,
+                    expiresMinutes: 15,
+                  });
+                  codeSent = true;
+                } catch (mailErr) {
+                  console.error('[PocketLedger] Failed to send verification email on login:', mailErr);
+                }
+              }
+            }
+            return sendJson(res, 403, {
+              error: codeSent
+                ? 'Please confirm your email address. We sent a fresh 6-digit code to your inbox.'
+                : err.message,
+              code: 'EMAIL_NOT_VERIFIED',
+              email: normalizedEmail,
+              codeSent,
+            });
+          }
+          throw err;
+        }
         if (!user) {
           loginLimiter.recordFailure(loginKey);
           loginIpLimiter.recordFailure(clientIp);

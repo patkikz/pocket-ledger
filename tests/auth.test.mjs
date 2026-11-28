@@ -65,7 +65,7 @@ test('registerUser rejects duplicate email case-insensitively and rejects short 
 
 test('authenticateUser verifies valid credentials, rejects wrong password, and returns null for legacy NULL password_hash', () => {
   const ledger = createLedgerDb(':memory:');
-  ledger.registerUser({ email: 'alice@example.com', password: 'my-secret-password' });
+  ledger.registerUser({ email: 'alice@example.com', password: 'my-secret-password', emailVerified: true });
 
   const authed = ledger.authenticateUser({ email: '  ALICE@example.com ', password: 'my-secret-password' });
   assert.ok(authed);
@@ -251,8 +251,17 @@ test('HTTP auth gate: protected API routes return 401 without cookie and ignore 
   assert.equal(csvNoAuth.status, 401);
 });
 
-test('HTTP POST /api/auth/register creates user, sets pl_session cookie, and authenticates /api/dashboard', async () => {
-  const { handler } = createAppHandler({ dbPath: ':memory:' });
+test('HTTP POST /api/auth/register creates unverified user, verifies via OTP, sets pl_session cookie, and authenticates /api/dashboard', async () => {
+  const sentOtps = [];
+  const { handler } = createAppHandler({
+    dbPath: ':memory:',
+    mailer: {
+      async sendEmailVerificationCode(payload) {
+        sentOtps.push(payload);
+        return { delivered: true, mode: 'mock' };
+      },
+    },
+  });
 
   const badRes = await invokeHandler(handler, {
     method: 'POST',
@@ -274,14 +283,25 @@ test('HTTP POST /api/auth/register creates user, sets pl_session cookie, and aut
     },
   });
   assert.equal(regRes.status, 201);
-  const regJson = regRes.json();
+  assert.equal(regRes.headers['set-cookie'], undefined);
+  assert.equal(regRes.json().requiresVerification, true);
+  assert.equal(regRes.json().email, 'newuser@example.com');
+
+  const verifyRes = await invokeHandler(handler, {
+    method: 'POST',
+    url: '/api/auth/verify-email',
+    headers: { 'content-type': 'application/json' },
+    body: { email: 'NewUser@Example.com', code: sentOtps[0].code },
+  });
+  assert.equal(verifyRes.status, 200);
+  const regJson = verifyRes.json();
   assert.equal(regJson.user.email, 'newuser@example.com');
   assert.equal(regJson.user.homeCurrencyCode, 'EUR');
   assert.equal(regJson.user.budgetCycleStartDay, 5);
   assert.equal('passwordHash' in regJson.user, false);
   assert.equal('password_hash' in regJson.user, false);
 
-  const { pair, full } = extractSessionCookie(regRes);
+  const { pair, full } = extractSessionCookie(verifyRes);
   assert.match(full, /HttpOnly/);
   assert.match(full, /SameSite=Lax/);
   assert.match(full, /Max-Age=2592000/);
@@ -308,14 +328,21 @@ test('HTTP POST /api/auth/register creates user, sets pl_session cookie, and aut
   const httpsRegRes = await invokeHandler(handler, {
     method: 'POST',
     url: '/api/auth/register',
+    headers: { 'content-type': 'application/json' },
+    body: { email: 'httpsuser@example.com', password: 'password123' },
+  });
+  assert.equal(httpsRegRes.status, 201);
+  const httpsVerifyRes = await invokeHandler(handler, {
+    method: 'POST',
+    url: '/api/auth/verify-email',
     headers: {
       'content-type': 'application/json',
       'x-forwarded-proto': 'https',
     },
-    body: { email: 'httpsuser@example.com', password: 'password123' },
+    body: { email: 'httpsuser@example.com', code: sentOtps[1].code },
   });
-  assert.equal(httpsRegRes.status, 201);
-  const { full: httpsCookie } = extractSessionCookie(httpsRegRes);
+  assert.equal(httpsVerifyRes.status, 200);
+  const { full: httpsCookie } = extractSessionCookie(httpsVerifyRes);
   assert.match(httpsCookie, /;\s*Secure/);
 });
 
@@ -398,7 +425,16 @@ test('DISABLE_DEMO=1 disables demoEnabled in /api/auth/me and rejects demo login
   const prevDisableDemo = process.env.DISABLE_DEMO;
   process.env.DISABLE_DEMO = '1';
   try {
-    const { handler, demoUserId } = createAppHandler({ dbPath: ':memory:' });
+    const sentOtps = [];
+    const { handler, demoUserId } = createAppHandler({
+      dbPath: ':memory:',
+      mailer: {
+        async sendEmailVerificationCode(payload) {
+          sentOtps.push(payload);
+          return { delivered: true, mode: 'mock' };
+        },
+      },
+    });
     assert.equal(demoUserId, null);
 
     const meRes = await invokeHandler(handler, { method: 'GET', url: '/api/auth/me' });
@@ -424,7 +460,14 @@ test('DISABLE_DEMO=1 disables demoEnabled in /api/auth/me and rejects demo login
       body: { email: 'solo@example.com', password: 'password123' },
     });
     assert.equal(regRes.status, 201);
-    const { pair } = extractSessionCookie(regRes);
+    const verifyRes = await invokeHandler(handler, {
+      method: 'POST',
+      url: '/api/auth/verify-email',
+      headers: { 'content-type': 'application/json' },
+      body: { email: 'solo@example.com', code: sentOtps[0].code },
+    });
+    assert.equal(verifyRes.status, 200);
+    const { pair } = extractSessionCookie(verifyRes);
 
     const meAuthed = await invokeHandler(handler, {
       method: 'GET',

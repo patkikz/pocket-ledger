@@ -144,7 +144,7 @@ test('changePassword verifies current password, blocks demo accounts, and revoke
       (err) => err.statusCode === 403
     );
 
-    const user = ledger.registerUser({ email: 'pw@example.com', password: 'old-password-1' });
+    const user = ledger.registerUser({ email: 'pw@example.com', password: 'old-password-1', emailVerified: true });
     const s1 = ledger.createSession(user.id);
     const s2 = ledger.createSession(user.id);
 
@@ -219,7 +219,16 @@ test('createPostgresLedger.init adds profile columns and updateUserProfile updat
 });
 
 test('HTTP PATCH /api/profile and POST /api/auth/change-password enforce auth, validation, and demo guard', async () => {
-  const { handler, ledger } = createAppHandler({ dbPath: ':memory:' });
+  const sentOtps = [];
+  const { handler, ledger } = createAppHandler({
+    dbPath: ':memory:',
+    mailer: {
+      async sendEmailVerificationCode(payload) {
+        sentOtps.push(payload);
+        return { delivered: true, mode: 'mock' };
+      },
+    },
+  });
   try {
     const unauth = await invokeHandler(handler, {
       method: 'PATCH',
@@ -236,7 +245,14 @@ test('HTTP PATCH /api/profile and POST /api/auth/change-password enforce auth, v
       body: { email: 'http-profile@example.com', password: 'password123' },
     });
     assert.equal(reg.status, 201);
-    const cookie = extractCookiePair(reg);
+    const ver = await invokeHandler(handler, {
+      method: 'POST',
+      url: '/api/auth/verify-email',
+      headers: { 'content-type': 'application/json' },
+      body: { email: 'http-profile@example.com', code: sentOtps[0].code },
+    });
+    assert.equal(ver.status, 200);
+    const cookie = extractCookiePair(ver);
 
     const patchRes = await invokeHandler(handler, {
       method: 'PATCH',
@@ -332,7 +348,16 @@ test('SPA routes (/accounts, /activity, /profile, /profile/security) serve index
 });
 
 test('App PIN lock: setPin, verifyPin, removePin, and HTTP /api/auth/pin lifecycle', async () => {
-  const { handler, ledger } = createAppHandler({ dbPath: ':memory:' });
+  const sentOtps = [];
+  const { handler, ledger } = createAppHandler({
+    dbPath: ':memory:',
+    mailer: {
+      async sendEmailVerificationCode(payload) {
+        sentOtps.push(payload);
+        return { delivered: true, mode: 'mock' };
+      },
+    },
+  });
   try {
     const reg = await invokeHandler(handler, {
       method: 'POST',
@@ -341,8 +366,15 @@ test('App PIN lock: setPin, verifyPin, removePin, and HTTP /api/auth/pin lifecyc
       body: { email: 'pin-user@example.com', password: 'password123' },
     });
     assert.equal(reg.status, 201);
-    assert.equal(reg.json().user.hasPin, false);
-    const cookie = extractCookiePair(reg);
+    const ver = await invokeHandler(handler, {
+      method: 'POST',
+      url: '/api/auth/verify-email',
+      headers: { 'content-type': 'application/json' },
+      body: { email: 'pin-user@example.com', code: sentOtps[0].code },
+    });
+    assert.equal(ver.status, 200);
+    assert.equal(ver.json().user.hasPin, false);
+    const cookie = extractCookiePair(ver);
 
     const badPin = await invokeHandler(handler, {
       method: 'POST',

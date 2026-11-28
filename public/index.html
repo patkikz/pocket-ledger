@@ -189,6 +189,46 @@
         <button type="button" class="btn-secondary auth-back-btn" id="resetBackBtn">Back to Sign In</button>
       </form>
 
+      <form id="verifyEmailForm" class="settings-form hidden">
+        <div class="otp-header">
+          <div class="otp-icon-badge" aria-hidden="true">
+            <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <rect x="2" y="4" width="20" height="16" rx="3"/>
+              <path d="m22 7-8.97 5.7a1.94 1.94 0 0 1-2.06 0L2 7"/>
+            </svg>
+          </div>
+          <h2 class="otp-title">Check your inbox</h2>
+          <p class="otp-sub">We sent a 6-digit confirmation code to</p>
+          <div class="otp-email-pill">
+            <span class="otp-email-dot" aria-hidden="true"></span>
+            <span id="verifyEmailTarget">your email</span>
+          </div>
+        </div>
+
+        <div class="field-group">
+          <div class="otp-group" id="verifyOtpGroup" role="group" aria-label="6-digit verification code">
+            <input type="text" inputmode="numeric" maxlength="1" autocomplete="one-time-code" aria-label="Digit 1" class="otp-box" />
+            <input type="text" inputmode="numeric" maxlength="1" aria-label="Digit 2" class="otp-box" />
+            <input type="text" inputmode="numeric" maxlength="1" aria-label="Digit 3" class="otp-box" />
+            <span class="otp-sep" aria-hidden="true">-</span>
+            <input type="text" inputmode="numeric" maxlength="1" aria-label="Digit 4" class="otp-box" />
+            <input type="text" inputmode="numeric" maxlength="1" aria-label="Digit 5" class="otp-box" />
+            <input type="text" inputmode="numeric" maxlength="1" aria-label="Digit 6" class="otp-box" />
+          </div>
+          <p class="otp-expiry-note">Type or paste your 6-digit code &middot; Expires in 15 minutes</p>
+        </div>
+
+        <button type="submit" class="submit-btn" id="verifySubmitBtn">Verify &amp; Continue</button>
+
+        <div class="otp-footer">
+          <button type="button" class="otp-footer-btn" id="verifyBackBtn">&larr; Back to Sign In</button>
+          <div class="otp-resend-wrap">
+            <span>Didn't get it?</span>
+            <button type="button" class="otp-resend-btn" id="verifyResendBtn">Resend code</button>
+          </div>
+        </div>
+      </form>
+
         <div id="demoLoginWrap" class="auth-demo-wrap hidden">
           <div class="auth-divider"><span>or</span></div>
           <button type="button" class="btn-secondary auth-demo-btn" id="demoLoginBtn">Try Demo Account</button>

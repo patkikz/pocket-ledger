@@ -1618,6 +1618,150 @@ select.input-field {
 
 .auth-back-btn {
   width: 100%;
+  justify-content: center;
+}
+
+.otp-header {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  text-align: center;
+  gap: 0.45rem;
+}
+
+.otp-icon-badge {
+  width: 48px;
+  height: 48px;
+  border-radius: 0.9rem;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(99, 102, 241, 0.14);
+  border: 1px solid rgba(99, 102, 241, 0.3);
+  color: var(--text-indigo);
+  margin-bottom: 0.25rem;
+}
+
+.otp-title {
+  font-size: 1.25rem;
+  font-weight: 700;
+  letter-spacing: -0.02em;
+  color: var(--text-primary);
+}
+
+.otp-sub {
+  font-size: 0.84rem;
+  color: var(--text-secondary);
+}
+
+.otp-email-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.45rem;
+  padding: 0.3rem 0.75rem;
+  border-radius: 999px;
+  background: var(--bg-elevated);
+  border: 1px solid var(--border-subtle);
+  font-size: 0.78rem;
+  font-weight: 600;
+  color: var(--text-primary);
+  margin-top: 0.2rem;
+}
+
+.otp-email-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 999px;
+  background: var(--accent-emerald);
+}
+
+.otp-group {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.45rem;
+}
+
+.otp-box {
+  width: 44px;
+  height: 52px;
+  border-radius: 0.75rem;
+  border: 1px solid var(--border-strong);
+  background: var(--bg-elevated);
+  color: var(--text-primary);
+  text-align: center;
+  font-size: 1.35rem;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  transition: border-color 0.15s ease, box-shadow 0.15s ease;
+}
+
+.otp-box:focus {
+  outline: none;
+  border-color: var(--accent-primary);
+  box-shadow: 0 0 0 3px rgba(99, 102, 241, 0.25);
+}
+
+.otp-sep {
+  color: var(--text-muted);
+  font-weight: 600;
+  user-select: none;
+}
+
+.otp-expiry-note {
+  text-align: center;
+  font-size: 0.75rem;
+  color: var(--text-muted);
+  margin-top: 0.25rem;
+}
+
+.otp-footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+  padding-top: 0.85rem;
+  border-top: 1px solid var(--border-subtle);
+  font-size: 0.78rem;
+}
+
+.otp-footer-btn {
+  background: none;
+  border: none;
+  padding: 0;
+  color: var(--text-secondary);
+  cursor: pointer;
+  font-size: 0.78rem;
+}
+
+.otp-footer-btn:hover {
+  color: var(--text-primary);
+}
+
+.otp-resend-wrap {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.3rem;
+  color: var(--text-muted);
+}
+
+.otp-resend-btn {
+  background: none;
+  border: none;
+  padding: 0;
+  color: var(--text-indigo);
+  font-weight: 600;
+  font-size: 0.78rem;
+  cursor: pointer;
+}
+
+.otp-resend-btn:hover:not(:disabled) {
+  text-decoration: underline;
+}
+
+.otp-resend-btn:disabled {
+  opacity: 0.6;
+  cursor: default;
 }
 
 .auth-register-extras {

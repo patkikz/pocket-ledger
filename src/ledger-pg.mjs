@@ -265,6 +265,16 @@ export function createPostgresLedger(connectionString, { pool: injectedPool } = 
       )`,
       `CREATE INDEX IF NOT EXISTS idx_password_reset_tokens_hash ON password_reset_tokens(token_hash)`,
       `CREATE INDEX IF NOT EXISTS idx_password_reset_tokens_user ON password_reset_tokens(user_id)`,
+      `CREATE TABLE IF NOT EXISTS email_verification_codes (
+        id TEXT PRIMARY KEY,
+        user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+        code_hash TEXT NOT NULL,
+        attempts INTEGER NOT NULL DEFAULT 0,
+        expires_at TEXT NOT NULL,
+        used_at TEXT,
+        created_at TEXT NOT NULL
+      )`,
+      `CREATE INDEX IF NOT EXISTS idx_email_verification_codes_user ON email_verification_codes(user_id)`,
       `ALTER TABLE users ADD COLUMN IF NOT EXISTS display_name TEXT`,
       `ALTER TABLE users ADD COLUMN IF NOT EXISTS avatar_color TEXT NOT NULL DEFAULT '#6366f1'`,
       `ALTER TABLE users ADD COLUMN IF NOT EXISTS theme TEXT NOT NULL DEFAULT 'system'`,
@@ -272,8 +282,24 @@ export function createPostgresLedger(connectionString, { pool: injectedPool } = 
       `ALTER TABLE users ADD COLUMN IF NOT EXISTS pin_hash TEXT`,
     ];
 
+    const hasEmailVerifiedCol = await queryOne(
+      `SELECT column_name FROM information_schema.columns WHERE table_name = 'users' AND column_name = 'email_verified_at'`
+    );
+
     for (const sql of statements) {
       await query(sql);
+    }
+
+    if (!hasEmailVerifiedCol) {
+      await query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS email_verified_at TEXT`);
+      const unverifiedDemo = await queryOne(
+        `SELECT id FROM users WHERE email_verified_at IS NULL AND LOWER(email) IN ('patrick@pocketledger.app', 'alex.isolated@pocketledger.app') LIMIT 1`
+      );
+      if (unverifiedDemo) {
+        await query(
+          `UPDATE users SET email_verified_at = created_at WHERE email_verified_at IS NULL AND LOWER(email) IN ('patrick@pocketledger.app', 'alex.isolated@pocketledger.app')`
+        );
+      }
     }
   }
 
@@ -322,11 +348,12 @@ export function createPostgresLedger(connectionString, { pool: injectedPool } = 
       budgetCycleStartDay: Number(u.budget_cycle_start_day),
       lastUsedAccountId: u.last_used_account_id,
       hasPin: Boolean(u.pin_hash),
+      emailVerified: Boolean(u.email_verified_at),
       createdAt: u.created_at,
     };
   }
 
-  async function createUser({ id = crypto.randomUUID(), email, homeCurrencyCode = 'USD', budgetCycleStartDay = 1, password = null }) {
+  async function createUser({ id = crypto.randomUUID(), email, homeCurrencyCode = 'USD', budgetCycleStartDay = 1, password = null, emailVerified = true }) {
     if (!email || typeof email !== 'string') throw new TypeError('Valid user email is required');
     const normalizedEmail = email.trim().toLowerCase();
     if (!normalizedEmail) throw new TypeError('Valid user email is required');
@@ -335,15 +362,16 @@ export function createPostgresLedger(connectionString, { pool: injectedPool } = 
     }
     const passwordHash = password !== null && password !== undefined ? hashPassword(password) : null;
     const now = new Date().toISOString();
+    const verifiedAt = emailVerified ? now : null;
     await query(`
-      INSERT INTO users (id, email, home_currency_code, budget_cycle_start_day, password_hash, created_at)
-      VALUES ($1, $2, $3, $4, $5, $6)
-    `, [id, normalizedEmail, homeCurrencyCode.toUpperCase(), budgetCycleStartDay, passwordHash, now]);
+      INSERT INTO users (id, email, home_currency_code, budget_cycle_start_day, password_hash, email_verified_at, created_at)
+      VALUES ($1, $2, $3, $4, $5, $6, $7)
+    `, [id, normalizedEmail, homeCurrencyCode.toUpperCase(), budgetCycleStartDay, passwordHash, verifiedAt, now]);
 
     return getUser(id);
   }
 
-  async function registerUser({ email, password, homeCurrencyCode = 'USD', budgetCycleStartDay = 1 }) {
+  async function registerUser({ email, password, homeCurrencyCode = 'USD', budgetCycleStartDay = 1, emailVerified = false }) {
     if (!email || typeof email !== 'string' || !email.trim() || !email.includes('@')) {
       const err = new TypeError('Valid user email is required');
       err.statusCode = 400;
@@ -369,6 +397,7 @@ export function createPostgresLedger(connectionString, { pool: injectedPool } = 
         password,
         homeCurrencyCode,
         budgetCycleStartDay,
+        emailVerified,
       });
       for (const cat of STARTER_CATEGORIES) {
         await createCategory(user.id, cat);
@@ -384,6 +413,12 @@ export function createPostgresLedger(connectionString, { pool: injectedPool } = 
     const row = await queryOne(`SELECT * FROM users WHERE LOWER(email) = $1`, [normalizedEmail]);
     if (!row || !row.password_hash) return null;
     if (!verifyPassword(password, row.password_hash)) return null;
+    if (!row.email_verified_at) {
+      const err = new Error('Please confirm your email address before signing in.');
+      err.code = 'EMAIL_NOT_VERIFIED';
+      err.statusCode = 403;
+      throw err;
+    }
     return getUser(row.id);
   }
 
@@ -582,6 +617,103 @@ export function createPostgresLedger(connectionString, { pool: injectedPool } = 
     });
 
     return { rawToken, email: row.email, expiresAt };
+  }
+
+  function hashVerificationCode(userId, code) {
+    return crypto.createHash('sha256').update(`${userId}:${String(code).trim()}`).digest('hex');
+  }
+
+  async function createEmailVerificationCode(email, { ttlMinutes = 15 } = {}) {
+    if (typeof email !== 'string' || !email.trim()) return null;
+    const normalizedEmail = email.trim().toLowerCase();
+    if (DEMO_EMAILS.has(normalizedEmail)) return null;
+
+    const row = await queryOne(
+      `SELECT id, email, email_verified_at FROM users WHERE LOWER(email) = $1`,
+      [normalizedEmail]
+    );
+    if (!row || row.email_verified_at) return null;
+
+    const code = String(crypto.randomInt(100000, 1000000));
+    const codeHash = hashVerificationCode(row.id, code);
+    const nowMs = Date.now();
+    const createdAt = new Date(nowMs).toISOString();
+    const expiresAt = new Date(nowMs + ttlMinutes * 60 * 1000).toISOString();
+
+    await runInTransaction(async () => {
+      await query(`DELETE FROM email_verification_codes WHERE user_id = $1 AND used_at IS NULL`, [row.id]);
+      await query(
+        `INSERT INTO email_verification_codes (id, user_id, code_hash, attempts, expires_at, created_at)
+         VALUES ($1, $2, $3, 0, $4, $5)`,
+        [crypto.randomUUID(), row.id, codeHash, expiresAt, createdAt]
+      );
+    });
+
+    return { code, email: row.email, expiresAt };
+  }
+
+  async function verifyEmailCode({ email, code } = {}) {
+    const normalizedEmail = typeof email === 'string' ? email.trim().toLowerCase() : '';
+    const cleanCode = typeof code === 'string' ? code.trim() : '';
+    if (!normalizedEmail || !/^\d{6}$/.test(cleanCode)) {
+      const err = new Error('Please enter a valid 6-digit verification code.');
+      err.statusCode = 400;
+      throw err;
+    }
+
+    const userRow = await queryOne(
+      `SELECT id, email, email_verified_at FROM users WHERE LOWER(email) = $1`,
+      [normalizedEmail]
+    );
+    if (!userRow) {
+      const err = new Error('Verification code is invalid or expired.');
+      err.statusCode = 400;
+      throw err;
+    }
+    if (userRow.email_verified_at) {
+      return getUser(userRow.id);
+    }
+
+    const codeRow = await queryOne(
+      `SELECT id, code_hash, attempts, expires_at
+       FROM email_verification_codes
+       WHERE user_id = $1 AND used_at IS NULL
+       ORDER BY created_at DESC
+       LIMIT 1`,
+      [userRow.id]
+    );
+
+    const nowIso = new Date().toISOString();
+    if (!codeRow || codeRow.expires_at <= nowIso) {
+      const err = new Error('Verification code is invalid or expired.');
+      err.statusCode = 400;
+      throw err;
+    }
+    if (Number(codeRow.attempts) >= 5) {
+      const err = new Error('Too many incorrect codes. Please request a new verification code.');
+      err.statusCode = 400;
+      throw err;
+    }
+
+    const expectedHash = hashVerificationCode(userRow.id, cleanCode);
+    if (expectedHash !== codeRow.code_hash) {
+      const nextAttempts = Number(codeRow.attempts) + 1;
+      await query(`UPDATE email_verification_codes SET attempts = $1 WHERE id = $2`, [nextAttempts, codeRow.id]);
+      const err = new Error(
+        nextAttempts >= 5
+          ? 'Too many incorrect codes. Please request a new verification code.'
+          : 'Verification code is invalid.'
+      );
+      err.statusCode = 400;
+      throw err;
+    }
+
+    await runInTransaction(async () => {
+      await query(`UPDATE email_verification_codes SET used_at = $1 WHERE id = $2`, [nowIso, codeRow.id]);
+      await query(`UPDATE users SET email_verified_at = $1 WHERE id = $2 AND email_verified_at IS NULL`, [nowIso, userRow.id]);
+    });
+
+    return getUser(userRow.id);
   }
 
   async function consumePasswordResetToken({ token, newPassword } = {}) {
@@ -1570,6 +1702,8 @@ export function createPostgresLedger(connectionString, { pool: injectedPool } = 
     changePassword,
     createPasswordResetToken,
     consumePasswordResetToken,
+    createEmailVerificationCode,
+    verifyEmailCode,
     setPin,
     removePin,
     verifyPin,

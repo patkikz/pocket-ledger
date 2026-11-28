@@ -62,6 +62,7 @@ test('createPasswordResetToken issues single-use token and invalidates prior unu
     const user = ledger.registerUser({
       email: 'alice@example.com',
       password: 'old-password-123',
+      emailVerified: true,
     });
 
     const first = ledger.createPasswordResetToken('Alice@Example.com');
@@ -132,6 +133,7 @@ test('consumePasswordResetToken rejects expired tokens and short passwords', () 
 
 test('POST /api/auth/forgot-password and /api/auth/reset-password full HTTP flow', async () => {
   const sentEmails = [];
+  const sentOtps = [];
   const { handler, ledger } = createAppHandler({
     dbPath: ':memory:',
     mailer: {
@@ -139,11 +141,15 @@ test('POST /api/auth/forgot-password and /api/auth/reset-password full HTTP flow
         sentEmails.push(payload);
         return { delivered: true, mode: 'mock' };
       },
+      async sendEmailVerificationCode(payload) {
+        sentOtps.push(payload);
+        return { delivered: true, mode: 'mock' };
+      },
     },
   });
 
   try {
-    // Register a normal user and verify login works
+    // Register and verify a normal user
     const regRes = await invokeHandler(handler, {
       method: 'POST',
       url: '/api/auth/register',
@@ -151,7 +157,14 @@ test('POST /api/auth/forgot-password and /api/auth/reset-password full HTTP flow
       body: { email: 'reset.user@example.com', password: 'old-password-123' },
     });
     assert.equal(regRes.status, 201);
-    const oldCookie = regRes.headers['set-cookie'].split(';')[0];
+    const verifyRes = await invokeHandler(handler, {
+      method: 'POST',
+      url: '/api/auth/verify-email',
+      headers: { 'content-type': 'application/json', 'x-forwarded-for': '10.0.0.1' },
+      body: { email: 'reset.user@example.com', code: sentOtps[0].code },
+    });
+    assert.equal(verifyRes.status, 200);
+    const oldCookie = verifyRes.headers['set-cookie'].split(';')[0];
 
     // Unregistered email returns identical 200 without sending email
     const unknownRes = await invokeHandler(handler, {

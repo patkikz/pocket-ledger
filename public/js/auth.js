@@ -37,13 +37,14 @@ export function setResetToken(token) {
 }
 
 export function setAuthMode(mode) {
-  const normalized = ['login', 'register', 'forgot', 'reset'].includes(mode) ? mode : 'login';
+  const normalized = ['login', 'register', 'forgot', 'reset', 'verify'].includes(mode) ? mode : 'login';
   state.authMode = normalized;
   const isRegister = normalized === 'register';
   const isAuthForm = normalized === 'login' || normalized === 'register';
 
   const modeTabs = document.querySelector('.auth-mode-tabs');
   if (modeTabs) modeTabs.classList.toggle('hidden', !isAuthForm);
+  document.querySelector('.auth-card-header')?.classList.toggle('hidden', normalized === 'verify');
 
   const signInBtn = document.getElementById('authModeSignInBtn');
   const registerBtn = document.getElementById('authModeRegisterBtn');
@@ -55,6 +56,7 @@ export function setAuthMode(mode) {
   document.getElementById('authForm').classList.toggle('hidden', !isAuthForm);
   document.getElementById('forgotPasswordForm')?.classList.toggle('hidden', normalized !== 'forgot');
   document.getElementById('resetPasswordForm')?.classList.toggle('hidden', normalized !== 'reset');
+  document.getElementById('verifyEmailForm')?.classList.toggle('hidden', normalized !== 'verify');
   document.getElementById('forgotPasswordLinkBtn')?.classList.toggle('hidden', normalized !== 'login');
   document.getElementById('demoLoginWrap')?.classList.toggle('hidden', !isAuthForm || !state.demoEnabled);
 
@@ -67,6 +69,7 @@ export function setAuthMode(mode) {
     register: ['Create your account', 'Get set up in less than a minute'],
     forgot: ['Reset your password', "We'll email you a one-time reset link"],
     reset: ['Set a new password', 'Choose a strong password (8+ characters)'],
+    verify: ['Confirm your email', 'Check your inbox for a 6-digit code'],
   };
   const [title, sub] = cardHeadings[normalized];
   const titleEl = document.getElementById('authCardTitle');
@@ -177,7 +180,34 @@ export function initAuthHandlers({ onAuthenticated }) {
         body: JSON.stringify(payload),
       });
       const data = await res.json().catch(() => ({}));
+      if (data.requiresVerification) {
+        state.pendingVerifyEmail = data.email || email;
+        const targetEl = document.getElementById('verifyEmailTarget');
+        if (targetEl) targetEl.textContent = state.pendingVerifyEmail;
+        document.querySelectorAll('#verifyOtpGroup .otp-box').forEach((box) => { box.value = ''; });
+        setAuthMode('verify');
+        document.querySelector('#verifyOtpGroup .otp-box')?.focus();
+        if (res.ok) {
+          showAuthInfo(data.message || 'We sent a 6-digit verification code to your email.');
+        } else {
+          showAuthError(data.error || 'Could not send verification email. Please try Resend code.');
+        }
+        return;
+      }
       if (!res.ok) {
+        if (data.code === 'EMAIL_NOT_VERIFIED') {
+          state.pendingVerifyEmail = data.email || email;
+          const targetEl = document.getElementById('verifyEmailTarget');
+          if (targetEl) targetEl.textContent = state.pendingVerifyEmail;
+          document.querySelectorAll('#verifyOtpGroup .otp-box').forEach((box) => { box.value = ''; });
+          setAuthMode('verify');
+          document.querySelector('#verifyOtpGroup .otp-box')?.focus();
+          if (data.codeSent) {
+            startResendCooldown(60);
+            showAuthInfo(data.error || 'We sent a fresh 6-digit code to your email.');
+            return;
+          }
+        }
         showAuthError(data.error || (isRegister ? 'Could not create account.' : 'Invalid email or password.'));
         return;
       }
@@ -301,6 +331,144 @@ export function initAuthHandlers({ onAuthenticated }) {
       document.getElementById('resetPasswordForm').reset();
       returnToLogin();
       showAuthInfo(data.message || 'Password updated. Please sign in with your new password.');
+    } catch {
+      showAuthError('Network error. Please try again.');
+    } finally {
+      submitBtn.disabled = false;
+    }
+  });
+
+  const otpBoxes = Array.from(document.querySelectorAll('#verifyOtpGroup .otp-box'));
+  function getOtpCode() {
+    return otpBoxes.map((b) => b.value.trim()).join('');
+  }
+
+  otpBoxes.forEach((box, idx) => {
+    box.addEventListener('input', (e) => {
+      const digits = e.target.value.replace(/\D/g, '');
+      if (digits.length > 1) {
+        digits.slice(0, 6 - idx).split('').forEach((ch, offset) => {
+          if (otpBoxes[idx + offset]) otpBoxes[idx + offset].value = ch;
+        });
+        otpBoxes[Math.min(5, idx + digits.length)]?.focus();
+        return;
+      }
+      e.target.value = digits;
+      if (digits && idx < otpBoxes.length - 1) {
+        otpBoxes[idx + 1].focus();
+      }
+    });
+
+    box.addEventListener('keydown', (e) => {
+      if (e.key === 'Backspace' && !box.value && idx > 0) {
+        otpBoxes[idx - 1].focus();
+      }
+    });
+
+    box.addEventListener('paste', (e) => {
+      const pasted = (e.clipboardData?.getData('text') || '').replace(/\D/g, '').slice(0, 6);
+      if (!pasted) return;
+      e.preventDefault();
+      pasted.split('').forEach((ch, i) => {
+        if (otpBoxes[i]) otpBoxes[i].value = ch;
+      });
+      otpBoxes[Math.min(5, pasted.length - 1)]?.focus();
+    });
+  });
+
+  let resendTimer = null;
+  function stopResendCooldown() {
+    if (resendTimer) {
+      clearInterval(resendTimer);
+      resendTimer = null;
+    }
+    const btn = document.getElementById('verifyResendBtn');
+    if (btn) {
+      btn.disabled = false;
+      btn.textContent = 'Resend code';
+    }
+  }
+
+  function startResendCooldown(seconds = 60) {
+    stopResendCooldown();
+    const btn = document.getElementById('verifyResendBtn');
+    if (!btn) return;
+    let remaining = seconds;
+    btn.disabled = true;
+    btn.textContent = `Resend in ${remaining}s`;
+    resendTimer = setInterval(() => {
+      remaining -= 1;
+      if (remaining <= 0) {
+        stopResendCooldown();
+        return;
+      }
+      btn.textContent = `Resend in ${remaining}s`;
+    }, 1000);
+  }
+
+  document.getElementById('verifyBackBtn')?.addEventListener('click', () => {
+    stopResendCooldown();
+    state.pendingVerifyEmail = '';
+    setAuthMode('login');
+  });
+
+  document.getElementById('verifyResendBtn')?.addEventListener('click', async () => {
+    clearAuthError();
+    clearAuthInfo();
+    const email = state.pendingVerifyEmail || document.getElementById('authEmail').value.trim();
+    if (!email) {
+      showAuthError('Please enter your email address first.');
+      return;
+    }
+    const btn = document.getElementById('verifyResendBtn');
+    btn.disabled = true;
+    try {
+      const res = await fetch('/api/auth/resend-verification', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ email }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        btn.disabled = false;
+        showAuthError(data.error || 'Unable to resend verification code.');
+        return;
+      }
+      startResendCooldown(60);
+      showAuthInfo(data.message || 'A new 6-digit code has been sent to your email.');
+    } catch {
+      btn.disabled = false;
+      showAuthError('Network error. Please try again.');
+    }
+  });
+
+  document.getElementById('verifyEmailForm')?.addEventListener('submit', async (e) => {
+    e.preventDefault();
+    clearAuthError();
+    clearAuthInfo();
+    const email = state.pendingVerifyEmail || document.getElementById('authEmail').value.trim();
+    const code = getOtpCode();
+    if (!/^\d{6}$/.test(code)) {
+      showAuthError('Please enter all 6 digits of your verification code.');
+      return;
+    }
+    const submitBtn = document.getElementById('verifySubmitBtn');
+    submitBtn.disabled = true;
+    try {
+      const res = await fetch('/api/auth/verify-email', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ email, code }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        showAuthError(data.error || 'Verification code is invalid or expired.');
+        return;
+      }
+      stopResendCooldown();
+      state.pendingVerifyEmail = '';
+      document.getElementById('verifyEmailForm').reset();
+      await completeAuthSuccess(data.user);
     } catch {
       showAuthError('Network error. Please try again.');
     } finally {

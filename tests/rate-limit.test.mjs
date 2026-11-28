@@ -115,7 +115,16 @@ test('HTTP POST /api/auth/login rate-limits after 5 failed attempts with 429 and
 });
 
 test('HTTP POST /api/auth/pin/verify rate-limits after 5 wrong PINs with 429 and Retry-After', async () => {
-  const { handler } = createAppHandler({ dbPath: ':memory:' });
+  const sentOtps = [];
+  const { handler } = createAppHandler({
+    dbPath: ':memory:',
+    mailer: {
+      async sendEmailVerificationCode(payload) {
+        sentOtps.push(payload);
+        return { delivered: true, mode: 'mock' };
+      },
+    },
+  });
 
   const regRes = await invokeHandler(handler, {
     method: 'POST',
@@ -124,7 +133,14 @@ test('HTTP POST /api/auth/pin/verify rate-limits after 5 wrong PINs with 429 and
     body: { email: 'pinrate@example.com', password: 'password123' },
   });
   assert.equal(regRes.status, 201);
-  const cookie = regRes.headers['set-cookie'].split(';')[0];
+  const verRes = await invokeHandler(handler, {
+    method: 'POST',
+    url: '/api/auth/verify-email',
+    headers: { 'content-type': 'application/json', 'x-forwarded-for': '198.51.100.5' },
+    body: { email: 'pinrate@example.com', code: sentOtps[0].code },
+  });
+  assert.equal(verRes.status, 200);
+  const cookie = verRes.headers['set-cookie'].split(';')[0];
 
   const setPinRes = await invokeHandler(handler, {
     method: 'POST',

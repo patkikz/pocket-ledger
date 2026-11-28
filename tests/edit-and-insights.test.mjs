@@ -151,7 +151,16 @@ test('getCycleDashboard returns cycle-over-cycle spending insights (previousTota
 });
 
 test('HTTP PATCH endpoints enforce session auth + tenant isolation for transaction, account, category, and recurring edits', async () => {
-  const { handler } = createAppHandler({ dbPath: ':memory:' });
+  const sentOtps = [];
+  const { handler } = createAppHandler({
+    dbPath: ':memory:',
+    mailer: {
+      async sendEmailVerificationCode(payload) {
+        sentOtps.push(payload);
+        return { delivered: true, mode: 'mock' };
+      },
+    },
+  });
 
   const regA = await invokeHandler(handler, {
     method: 'POST',
@@ -160,7 +169,14 @@ test('HTTP PATCH endpoints enforce session auth + tenant isolation for transacti
     body: { email: 'user1@example.com', password: 'password123' },
   });
   assert.equal(regA.status, 201);
-  const cookieA = regA.headers['set-cookie'].split(';')[0];
+  const verA = await invokeHandler(handler, {
+    method: 'POST',
+    url: '/api/auth/verify-email',
+    headers: { 'content-type': 'application/json' },
+    body: { email: 'user1@example.com', code: sentOtps[0].code },
+  });
+  assert.equal(verA.status, 200);
+  const cookieA = verA.headers['set-cookie'].split(';')[0];
 
   const regB = await invokeHandler(handler, {
     method: 'POST',
@@ -169,7 +185,14 @@ test('HTTP PATCH endpoints enforce session auth + tenant isolation for transacti
     body: { email: 'user2@example.com', password: 'password123' },
   });
   assert.equal(regB.status, 201);
-  const cookieB = regB.headers['set-cookie'].split(';')[0];
+  const verB = await invokeHandler(handler, {
+    method: 'POST',
+    url: '/api/auth/verify-email',
+    headers: { 'content-type': 'application/json' },
+    body: { email: 'user2@example.com', code: sentOtps[1].code },
+  });
+  assert.equal(verB.status, 200);
+  const cookieB = verB.headers['set-cookie'].split(';')[0];
 
   const accRes = await invokeHandler(handler, {
     method: 'POST',
