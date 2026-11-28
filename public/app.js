@@ -60,7 +60,7 @@ if (scrollTopBtn) {
   });
 }
 
-initModalComponents();
+const nextFrame = () => new Promise((resolve) => requestAnimationFrame(() => resolve()));
 
 const EYE_OPEN_SVG = '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>';
 const EYE_OFF_SVG = '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19m-6.72-1.07a3 3 0 1 1-4.24-4.24"/><line x1="1" y1="1" x2="23" y2="23"/></svg>';
@@ -77,7 +77,7 @@ document.addEventListener('click', (e) => {
   toggleBtn.innerHTML = show ? EYE_OFF_SVG : EYE_OPEN_SVG;
 });
 
-// Initialize Feature Modules
+// Initialize Feature Modules (auth first, secondary handlers chunked after first paint)
 setViewChangeHandler((viewName) => {
   if (viewName === 'history') ensureActivityLoaded();
 });
@@ -88,19 +88,26 @@ window.addEventListener('popstate', () => {
 });
 initAuthHandlers({
   onAuthenticated: async () => {
+    await featureInitPromise;
     await fetchDashboard();
     const { viewName, accountTab } = parseRoute(window.location.pathname);
     switchView(viewName, { push: false, accountTab });
   },
 });
-initQuickEntryHandlers({ openAddCategoryModal });
-initAccountHandlers();
-initBudgetAndRecurringHandlers();
-initActivityHandlers();
-initProfileHandlers();
-initPinLockHandlers();
-initRealtimeWakeRefresh();
-initPullToRefresh();
+
+const featureInitPromise = (async () => {
+  await nextFrame();
+  initModalComponents();
+  initQuickEntryHandlers({ openAddCategoryModal });
+  initAccountHandlers();
+  await nextFrame();
+  initBudgetAndRecurringHandlers();
+  initActivityHandlers();
+  initProfileHandlers();
+  initPinLockHandlers();
+  initRealtimeWakeRefresh();
+  initPullToRefresh();
+})();
 
 let bootHideTimer = null;
 
@@ -146,6 +153,7 @@ async function boot() {
     const data = await res.json();
     state.demoEnabled = Boolean(data.demoEnabled);
     if (data.authenticated && data.user) {
+      await featureInitPromise;
       showAppShell(data.user);
       requirePinIfEnabled(data.user);
       await fetchDashboard();

@@ -130,6 +130,7 @@ button:active, .chip:active, .key-btn:active, .tab-btn:active, .nav-tab:active, 
   justify-content: center;
   gap: 0.9rem;
   opacity: 1;
+  contain: layout style paint;
   transition: opacity 180ms var(--ease-out);
 }
 
@@ -153,18 +154,17 @@ button:active, .chip:active, .key-btn:active, .tab-btn:active, .nav-tab:active, 
   width: 96px;
   height: 96px;
   border-radius: 999px;
-  background: radial-gradient(circle, rgba(99, 102, 241, 0.28) 0%, rgba(16, 185, 129, 0.14) 45%, transparent 72%);
-  will-change: transform, opacity;
-  animation: bootPulse 1.6s var(--ease-out) infinite;
+  background: radial-gradient(circle, rgba(99, 102, 241, 0.24) 0%, rgba(16, 185, 129, 0.1) 45%, transparent 72%);
 }
 
 .boot-wallet-svg {
-  position: absolute;
+  position: relative;
 }
 
-.boot-wallet-active {
-  will-change: transform, opacity;
-  animation: bootPulse 1.6s var(--ease-out) infinite;
+.boot-trace-stroke {
+  stroke-dasharray: 42 38;
+  will-change: stroke-dashoffset;
+  animation: bootTrace 1.8s cubic-bezier(0.45, 0.05, 0.55, 0.95) infinite;
 }
 
 .boot-text {
@@ -173,23 +173,16 @@ button:active, .chip:active, .key-btn:active, .tab-btn:active, .nav-tab:active, 
   font-weight: 600;
 }
 
-@keyframes bootPulse {
-  0%, 100% {
-    opacity: 0.25;
-    transform: scale(0.95);
-  }
-  50% {
-    opacity: 1;
-    transform: scale(1.04);
-  }
+@keyframes bootTrace {
+  0% { stroke-dashoffset: 80; }
+  50% { stroke-dashoffset: 0; }
+  100% { stroke-dashoffset: -80; }
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .boot-glow,
-  .boot-wallet-active {
+  .boot-trace-stroke {
     animation: none;
-    opacity: 1;
-    transform: none;
+    stroke-dasharray: none;
   }
 }
 
