@@ -147,9 +147,13 @@ export function createAppHandler({
   const pinLimiter = createRateLimiter({ windowMs: 15 * 60 * 1000, maxAttempts: 5 });
   const passwordChangeLimiter = createRateLimiter({ windowMs: 15 * 60 * 1000, maxAttempts: 5 });
 
-  function formatRetryMinutes(retryAfterSeconds) {
-    const mins = Math.max(1, Math.ceil(retryAfterSeconds / 60));
-    return `${mins} minute${mins === 1 ? '' : 's'}`;
+  function formatRetryDuration(retryAfterSeconds) {
+    const total = Math.max(1, Math.ceil(retryAfterSeconds));
+    const mins = Math.floor(total / 60);
+    const secs = total % 60;
+    if (mins === 0) return `${secs}s`;
+    if (secs === 0) return `${mins}m`;
+    return `${mins}m ${secs}s`;
   }
 
   function notifyUser(userId, reason = 'mutation') {
@@ -207,7 +211,10 @@ export function createAppHandler({
           return sendJson(
             res,
             429,
-            { error: `Too many registration attempts. Please try again in ${formatRetryMinutes(regCheck.retryAfterSeconds)}.` },
+            {
+              error: `Too many registration attempts. Please try again in ${formatRetryDuration(regCheck.retryAfterSeconds)}.`,
+              retryAfterSeconds: regCheck.retryAfterSeconds,
+            },
             { 'retry-after': String(regCheck.retryAfterSeconds) }
           );
         }
@@ -236,7 +243,10 @@ export function createAppHandler({
           return sendJson(
             res,
             429,
-            { error: `Too many login attempts. Please try again in ${formatRetryMinutes(ipCheck.retryAfterSeconds)}.` },
+            {
+              error: `Too many login attempts. Please try again in ${formatRetryDuration(ipCheck.retryAfterSeconds)}.`,
+              retryAfterSeconds: ipCheck.retryAfterSeconds,
+            },
             { 'retry-after': String(ipCheck.retryAfterSeconds) }
           );
         }
@@ -248,7 +258,10 @@ export function createAppHandler({
           return sendJson(
             res,
             429,
-            { error: `Too many failed login attempts. Please try again in ${formatRetryMinutes(keyCheck.retryAfterSeconds)}.` },
+            {
+              error: `Too many failed login attempts. Please try again in ${formatRetryDuration(keyCheck.retryAfterSeconds)}.`,
+              retryAfterSeconds: keyCheck.retryAfterSeconds,
+            },
             { 'retry-after': String(keyCheck.retryAfterSeconds) }
           );
         }
@@ -569,7 +582,10 @@ export function createAppHandler({
             return sendJson(
               res,
               429,
-              { error: `Too many password attempts. Please try again in ${formatRetryMinutes(pwCheck.retryAfterSeconds)}.` },
+              {
+                error: `Too many password attempts. Please try again in ${formatRetryDuration(pwCheck.retryAfterSeconds)}.`,
+                retryAfterSeconds: pwCheck.retryAfterSeconds,
+              },
               { ...authHeaders, 'retry-after': String(pwCheck.retryAfterSeconds) }
             );
           }
@@ -607,7 +623,11 @@ export function createAppHandler({
             return sendJson(
               res,
               429,
-              { valid: false, error: `Too many failed PIN attempts. Try again in ${formatRetryMinutes(pinCheck.retryAfterSeconds)}.` },
+              {
+                valid: false,
+                error: `Too many failed PIN attempts. Try again in ${formatRetryDuration(pinCheck.retryAfterSeconds)}.`,
+                retryAfterSeconds: pinCheck.retryAfterSeconds,
+              },
               { ...authHeaders, 'retry-after': String(pinCheck.retryAfterSeconds) }
             );
           }
@@ -615,7 +635,12 @@ export function createAppHandler({
           const valid = await ledger.verifyPin(userId, body.pin);
           if (!valid) {
             pinLimiter.recordFailure(userId);
-            return replyJson(400, { valid: false, error: 'Incorrect PIN' });
+            const after = pinLimiter.check(userId);
+            const attemptsRemaining = after.allowed ? after.remaining : 0;
+            const detail = attemptsRemaining > 0
+              ? `Incorrect PIN. ${attemptsRemaining} attempt${attemptsRemaining === 1 ? '' : 's'} remaining.`
+              : `Incorrect PIN. Too many attempts—locked for ${formatRetryDuration(after.retryAfterSeconds)}.`;
+            return replyJson(400, { valid: false, error: detail, attemptsRemaining, retryAfterSeconds: after.retryAfterSeconds });
           }
           pinLimiter.reset(userId);
           return replyJson(200, { valid: true });

@@ -2,6 +2,46 @@ import { state, apiFetch, showToast, getUserInitials } from './state.js';
 
 let enteredPin = '';
 let verifying = false;
+let lockoutTimer = null;
+
+function formatCountdown(totalSeconds) {
+  const s = Math.max(0, Math.ceil(totalSeconds));
+  const mins = Math.floor(s / 60);
+  const secs = s % 60;
+  if (mins === 0) return `${secs}s`;
+  return `${mins}m ${String(secs).padStart(2, '0')}s`;
+}
+
+function setPinKeypadDisabled(disabled) {
+  document.querySelectorAll('#pinLockOverlay [data-pin-key]').forEach((btn) => {
+    btn.disabled = disabled;
+  });
+}
+
+function stopPinCountdown() {
+  if (lockoutTimer) {
+    clearInterval(lockoutTimer);
+    lockoutTimer = null;
+  }
+  setPinKeypadDisabled(false);
+}
+
+function startPinCountdown(retryAfterSeconds) {
+  stopPinCountdown();
+  let remaining = Math.max(1, Math.ceil(Number(retryAfterSeconds) || 60));
+  setPinKeypadDisabled(true);
+  setPinError(`PIN locked. Try again in ${formatCountdown(remaining)}.`);
+
+  lockoutTimer = setInterval(() => {
+    remaining -= 1;
+    if (remaining <= 0) {
+      stopPinCountdown();
+      setPinError('');
+      return;
+    }
+    setPinError(`PIN locked. Try again in ${formatCountdown(remaining)}.`);
+  }, 1000);
+}
 
 export function isStandalonePwa() {
   if (typeof window === 'undefined') return false;
@@ -40,6 +80,7 @@ function setPinError(msg = '') {
 }
 
 export function clearPinSession() {
+  stopPinCountdown();
   enteredPin = '';
   document.getElementById('pinLockOverlay')?.classList.add('hidden');
 }
@@ -88,10 +129,16 @@ async function submitPin() {
       enteredPin = '';
       renderDots();
       triggerDotShake();
-      setPinError(msg);
+      if (res.status === 429 || (errData.retryAfterSeconds && errData.attemptsRemaining === 0)) {
+        const secs = errData.retryAfterSeconds || Number(res.headers.get('retry-after')) || 900;
+        startPinCountdown(secs);
+      } else {
+        setPinError(msg);
+      }
       showToast(msg, true);
       return;
     }
+    stopPinCountdown();
     enteredPin = '';
     renderDots();
     setPinError('');

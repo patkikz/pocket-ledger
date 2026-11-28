@@ -100,7 +100,9 @@ test('HTTP POST /api/auth/login rate-limits after 5 failed attempts with 429 and
   });
   assert.equal(blockedRes.status, 429);
   assert.ok(Number(blockedRes.headers['retry-after']) > 0);
-  assert.match(blockedRes.json().error, /too many/i);
+  const blockedData = blockedRes.json();
+  assert.match(blockedData.error, /too many/i);
+  assert.ok(blockedData.retryAfterSeconds > 0);
 
   // Different IP can still log in normally
   const otherIpRes = await invokeHandler(handler, {
@@ -140,6 +142,7 @@ test('HTTP POST /api/auth/pin/verify rate-limits after 5 wrong PINs with 429 and
       body: { pin: '0000' },
     });
     assert.equal(res.status, 400);
+    assert.equal(res.json().attemptsRemaining, 4 - i);
   }
 
   // 6th attempt even with right PIN is blocked with 429
@@ -151,7 +154,9 @@ test('HTTP POST /api/auth/pin/verify rate-limits after 5 wrong PINs with 429 and
   });
   assert.equal(blockedRes.status, 429);
   assert.ok(Number(blockedRes.headers['retry-after']) > 0);
-  assert.match(blockedRes.json().error, /too many/i);
+  const blockedData = blockedRes.json();
+  assert.match(blockedData.error, /too many/i);
+  assert.ok(blockedData.retryAfterSeconds > 0);
 });
 
 test('HTTP POST /api/auth/register rate-limits excessive signups from the same IP', async () => {
