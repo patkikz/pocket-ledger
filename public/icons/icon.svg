@@ -1,9 +1,14 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512" role="img" aria-label="PocketLedger">
+  <defs>
+    <linearGradient id="appIconGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#818cf8" />
+      <stop offset="100%" stop-color="#34d399" />
+    </linearGradient>
+  </defs>
   <rect width="512" height="512" rx="112" fill="#090d16"/>
   <rect x="24" y="24" width="464" height="464" rx="96" fill="none" stroke="#1e293b" stroke-width="6"/>
-  <g transform="translate(96 112)" fill="none" stroke-linecap="round" stroke-linejoin="round">
-    <path d="M256 64V32a16 16 0 0 0-16-16H48a32 32 0 0 0 0 64h224a16 16 0 0 1 16 16v64h-48a32 32 0 0 0 0 64h48a16 16 0 0 0 16-16v-32a16 16 0 0 0-16-16" stroke="#10b981" stroke-width="22"/>
-    <path d="M16 48v192a32 32 0 0 0 32 32h224a16 16 0 0 0 16-16v-48" stroke="#f8fafc" stroke-width="22"/>
-    <circle cx="240" cy="192" r="10" fill="#10b981" stroke="none"/>
+  <g transform="translate(96 112)" fill="none" stroke="url(#appIconGrad)" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M256 64V32a16 16 0 0 0-16-16H48a32 32 0 0 0 0 64h224a16 16 0 0 1 16 16v64h-48a32 32 0 0 0 0 64h48a16 16 0 0 0 16-16v-32a16 16 0 0 0-16-16" stroke-width="22"/>
+    <path d="M16 48v192a32 32 0 0 0 32 32h224a16 16 0 0 0 16-16v-48" stroke-width="22"/>
   </g>
 </svg>

@@ -18,9 +18,32 @@ try {
 }
 
 // Global Navigation & Modal Chrome
+async function navigateHomeWithBootLoader() {
+  showBootLoader();
+  const minDelay = new Promise((resolve) => setTimeout(resolve, 450));
+  switchView('home');
+  try {
+    if (state.user) {
+      await Promise.all([fetchDashboard(), minDelay]);
+    } else {
+      await minDelay;
+    }
+  } finally {
+    hideBootLoader();
+  }
+}
+
 document.querySelectorAll('.nav-tab').forEach((tab) => {
-  tab.addEventListener('click', () => switchView(tab.dataset.view));
+  tab.addEventListener('click', () => {
+    if (tab.dataset.view === 'home') {
+      navigateHomeWithBootLoader();
+      return;
+    }
+    switchView(tab.dataset.view);
+  });
 });
+document.getElementById('brandHomeBtn')?.addEventListener('click', navigateHomeWithBootLoader);
+document.getElementById('brandHomeTitle')?.addEventListener('click', navigateHomeWithBootLoader);
 document.getElementById('seeAllActivityBtn').addEventListener('click', () => switchView('history'));
 document.getElementById('prevCycleBtn').addEventListener('click', () => shiftReferenceMonth(-1));
 document.getElementById('nextCycleBtn').addEventListener('click', () => shiftReferenceMonth(1));
@@ -79,19 +102,37 @@ initPinLockHandlers();
 initRealtimeWakeRefresh();
 initPullToRefresh();
 
+let bootHideTimer = null;
+
+function showBootLoader() {
+  if (bootHideTimer) {
+    clearTimeout(bootHideTimer);
+    bootHideTimer = null;
+  }
+  const loader = document.getElementById('bootLoader');
+  if (!loader) return;
+  loader.classList.remove('hidden', 'fade-out');
+}
+
 function hideBootLoader() {
   const loader = document.getElementById('bootLoader');
   if (!loader || loader.classList.contains('hidden')) return;
   loader.classList.add('fade-out');
-  setTimeout(() => loader.classList.add('hidden'), 180);
+  bootHideTimer = setTimeout(() => {
+    loader.classList.add('hidden');
+    bootHideTimer = null;
+  }, 180);
 }
 
 async function boot() {
+  const bootStartedAt = Date.now();
   document.getElementById('txDateInput').value = state.referenceDate;
   const resetToken = new URLSearchParams(window.location.search).get('resetToken');
   if (resetToken) {
     setResetToken(resetToken);
     showAuthView({ demoEnabled: false });
+    const elapsed = Date.now() - bootStartedAt;
+    if (elapsed < 450) await new Promise((r) => setTimeout(r, 450 - elapsed));
     hideBootLoader();
     return;
   }
@@ -119,6 +160,8 @@ async function boot() {
       showAuthError('Unable to connect to PocketLedger. Please try again.');
     }
   } finally {
+    const elapsed = Date.now() - bootStartedAt;
+    if (elapsed < 450) await new Promise((r) => setTimeout(r, 450 - elapsed));
     hideBootLoader();
   }
 }
