@@ -5,6 +5,7 @@ import { fileURLToPath } from 'node:url';
 import { createLedgerDb } from './ledger.mjs';
 import { createPostgresLedger } from './ledger-pg.mjs';
 import { seedDefaultTenants } from './seed.mjs';
+import { createRateLimiter, getClientIp } from './rate-limit.mjs';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -140,6 +141,16 @@ export function createAppHandler({
 
   const demoEnabled = !disableDemo;
   const sseClients = new Map();
+  const loginLimiter = createRateLimiter({ windowMs: 15 * 60 * 1000, maxAttempts: 5 });
+  const loginIpLimiter = createRateLimiter({ windowMs: 15 * 60 * 1000, maxAttempts: 20 });
+  const registerLimiter = createRateLimiter({ windowMs: 15 * 60 * 1000, maxAttempts: 10 });
+  const pinLimiter = createRateLimiter({ windowMs: 15 * 60 * 1000, maxAttempts: 5 });
+  const passwordChangeLimiter = createRateLimiter({ windowMs: 15 * 60 * 1000, maxAttempts: 5 });
+
+  function formatRetryMinutes(retryAfterSeconds) {
+    const mins = Math.max(1, Math.ceil(retryAfterSeconds / 60));
+    return `${mins} minute${mins === 1 ? '' : 's'}`;
+  }
 
   function notifyUser(userId, reason = 'mutation') {
     const clients = sseClients.get(userId);
@@ -190,6 +201,17 @@ export function createAppHandler({
       }
 
       if (req.method === 'POST' && url.pathname === '/api/auth/register') {
+        const clientIp = getClientIp(req);
+        const regCheck = registerLimiter.check(clientIp);
+        if (!regCheck.allowed) {
+          return sendJson(
+            res,
+            429,
+            { error: `Too many registration attempts. Please try again in ${formatRetryMinutes(regCheck.retryAfterSeconds)}.` },
+            { 'retry-after': String(regCheck.retryAfterSeconds) }
+          );
+        }
+        registerLimiter.recordFailure(clientIp);
         const body = await readJsonBody(req);
         let user;
         try {
@@ -208,8 +230,28 @@ export function createAppHandler({
       }
 
       if (req.method === 'POST' && url.pathname === '/api/auth/login') {
+        const clientIp = getClientIp(req);
+        const ipCheck = loginIpLimiter.check(clientIp);
+        if (!ipCheck.allowed) {
+          return sendJson(
+            res,
+            429,
+            { error: `Too many login attempts. Please try again in ${formatRetryMinutes(ipCheck.retryAfterSeconds)}.` },
+            { 'retry-after': String(ipCheck.retryAfterSeconds) }
+          );
+        }
         const body = await readJsonBody(req);
         const normalizedEmail = typeof body.email === 'string' ? body.email.trim().toLowerCase() : '';
+        const loginKey = `${clientIp}:${normalizedEmail}`;
+        const keyCheck = loginLimiter.check(loginKey);
+        if (!keyCheck.allowed) {
+          return sendJson(
+            res,
+            429,
+            { error: `Too many failed login attempts. Please try again in ${formatRetryMinutes(keyCheck.retryAfterSeconds)}.` },
+            { 'retry-after': String(keyCheck.retryAfterSeconds) }
+          );
+        }
         if (disableDemo && DEMO_EMAILS.has(normalizedEmail)) {
           return sendJson(res, 403, { error: 'Demo accounts are disabled' });
         }
@@ -218,8 +260,11 @@ export function createAppHandler({
           password: body.password,
         });
         if (!user) {
+          loginLimiter.recordFailure(loginKey);
+          loginIpLimiter.recordFailure(clientIp);
           return sendJson(res, 401, { error: 'Invalid email or password' });
         }
+        loginLimiter.reset(loginKey);
         const { rawToken: sessionToken } = await ledger.createSession(user.id);
         return sendJson(res, 200, { user }, { 'set-cookie': buildSessionCookie(sessionToken, req) });
       }
@@ -519,32 +564,60 @@ export function createAppHandler({
         }
 
         if (req.method === 'POST' && url.pathname === '/api/auth/change-password') {
+          const pwCheck = passwordChangeLimiter.check(userId);
+          if (!pwCheck.allowed) {
+            return sendJson(
+              res,
+              429,
+              { error: `Too many password attempts. Please try again in ${formatRetryMinutes(pwCheck.retryAfterSeconds)}.` },
+              { ...authHeaders, 'retry-after': String(pwCheck.retryAfterSeconds) }
+            );
+          }
           const body = await readJsonBody(req);
-          await ledger.changePassword(userId, {
-            currentPassword: body.currentPassword,
-            newPassword: body.newPassword,
-            currentSessionToken: rawToken,
-          });
-          return replyJson(200, { ok: true });
+          try {
+            await ledger.changePassword(userId, {
+              currentPassword: body.currentPassword,
+              newPassword: body.newPassword,
+              currentSessionToken: rawToken,
+            });
+            passwordChangeLimiter.reset(userId);
+            return replyJson(200, { ok: true });
+          } catch (err) {
+            passwordChangeLimiter.recordFailure(userId);
+            throw err;
+          }
         }
 
         if (req.method === 'POST' && url.pathname === '/api/auth/pin') {
           const body = await readJsonBody(req);
           const updatedUser = await ledger.setPin(userId, body.pin);
+          pinLimiter.reset(userId);
           return replyJson(200, { ok: true, user: updatedUser });
         }
 
         if (req.method === 'DELETE' && url.pathname === '/api/auth/pin') {
           const updatedUser = await ledger.removePin(userId);
+          pinLimiter.reset(userId);
           return replyJson(200, { ok: true, user: updatedUser });
         }
 
         if (req.method === 'POST' && url.pathname === '/api/auth/pin/verify') {
+          const pinCheck = pinLimiter.check(userId);
+          if (!pinCheck.allowed) {
+            return sendJson(
+              res,
+              429,
+              { valid: false, error: `Too many failed PIN attempts. Try again in ${formatRetryMinutes(pinCheck.retryAfterSeconds)}.` },
+              { ...authHeaders, 'retry-after': String(pinCheck.retryAfterSeconds) }
+            );
+          }
           const body = await readJsonBody(req);
           const valid = await ledger.verifyPin(userId, body.pin);
           if (!valid) {
+            pinLimiter.recordFailure(userId);
             return replyJson(400, { valid: false, error: 'Incorrect PIN' });
           }
+          pinLimiter.reset(userId);
           return replyJson(200, { valid: true });
         }
 

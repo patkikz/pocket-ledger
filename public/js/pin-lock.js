@@ -83,11 +83,13 @@ async function submitPin() {
       body: JSON.stringify({ pin: enteredPin }),
     });
     if (!res.ok) {
+      const errData = await res.json().catch(() => ({}));
+      const msg = errData.error || 'Incorrect PIN. Please try again.';
       enteredPin = '';
       renderDots();
       triggerDotShake();
-      setPinError('Incorrect PIN. Please try again.');
-      showToast('Incorrect PIN. Please try again.', true);
+      setPinError(msg);
+      showToast(msg, true);
       return;
     }
     enteredPin = '';
